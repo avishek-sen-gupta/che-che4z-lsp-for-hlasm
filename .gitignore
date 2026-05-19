@@ -48,3 +48,4 @@ dummy/
 .npmrc
 
 /CMakeUserPresets.json
+.remember

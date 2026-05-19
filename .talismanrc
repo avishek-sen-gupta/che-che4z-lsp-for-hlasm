@@ -1,0 +1,6 @@
+fileignoreconfig:
+- filename: hlasm_export/macro_invocation_analyzer.h
+  checksum: 9c24a58cdb18dae0833a8bb2f699f867cb11a2ff0ccb7871bd7c1b0296642198
+- filename: hlasm_export/test/experiment_bms_test.cpp
+  checksum: f64b288e2177274101b806e0575ada8daf74ac19836773b9ba5ee8f5f933f129
+version: "1.0"
