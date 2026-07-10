@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
-LLVM_PREFIX=$(brew --prefix llvm@18)
 BUILD_TYPE=${BUILD_TYPE:-Debug}
 BUILD_DIR=${BUILD_DIR:-build}
 
 cmake -S . -B "$BUILD_DIR" \
     -G Ninja \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
-    -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
     -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$(pwd)/$BUILD_DIR/bin" \
     -DHLASM_DEV_GUESS_BIN_SUBDIR=ON \
     -DBUILD_VSIX=OFF \
