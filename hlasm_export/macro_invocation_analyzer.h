@@ -57,10 +57,25 @@ public:
         record.macro_name = std::string(res->opcode_ref().value.to_string_view());
         record.invocation_range = res->stmt_range_ref();
 
-        // Capture label if present
+        // Capture label if present.
+        //
+        // The name field of a macro invocation is not required to be an ordinary
+        // symbol, and HLASM says so with two label kinds: ORD when it parses as
+        // one, MAC for any other name-field text. Both are names here.
+        //
+        // Reading only ORD loses exactly the names a generator cares about most.
+        // BMS field names follow the rules of the generated language, so under
+        // LANG=COBOL a DFHMDF may legitimately be called SC-ELIG -- not an
+        // ordinary symbol, since HLASM symbols admit no hyphen, so it arrives as
+        // MAC. Dropping it leaves the invocation indistinguishable from a
+        // genuinely unnamed constant field, and every symbolic name BMS derives
+        // from it disappears from the generated copybook with no diagnostic
+        // anywhere.
         const auto& lbl = res->label_ref();
         if (lbl.type == semantics::label_si_type::ORD)
             record.label = std::get<semantics::ord_symbol_string>(lbl.value).mixed_case;
+        else if (lbl.type == semantics::label_si_type::MAC)
+            record.label = std::get<std::string>(lbl.value);
 
         // Capture keyword arguments
         for (const auto& op : res->operands_ref().value)

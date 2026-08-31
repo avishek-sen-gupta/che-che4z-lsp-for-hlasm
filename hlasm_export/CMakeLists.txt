@@ -44,6 +44,7 @@ if(BUILD_TESTING)
         test/experiment_hlasm_test.cpp
         test/experiment_bms_test.cpp
         test/experiment_json_export_test.cpp
+        test/macro_invocation_label_test.cpp
     )
 
     target_compile_features(hlasm_export_test PRIVATE cxx_std_20)
