@@ -57,6 +57,7 @@ add_subdirectory(parser_library)
 add_subdirectory(language_server)
 add_subdirectory(benchmark)
 add_subdirectory(hlasm_export)
+add_subdirectory(hlasm_ast_bridge)
 
 add_subdirectory(utils)
 
