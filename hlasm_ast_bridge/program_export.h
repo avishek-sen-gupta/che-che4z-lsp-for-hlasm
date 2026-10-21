@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <ostream>
@@ -92,7 +93,7 @@ public:
             { "format", program_format },
             { "sections", sections() },
             { "symbols", symbols() },
-            { "entry", collector.entry ? nlohmann::json(*collector.entry) : nlohmann::json(nullptr) },
+            { "entry", entry(collector) },
             { "externals", externals },
             { "statements", statements },
             { "literals", literals },
@@ -101,6 +102,15 @@ public:
     }
 
 private:
+    static nlohmann::json entry(const statement_collector& collector)
+    {
+        if (collector.entry_unrepresentable)
+            throw std::runtime_error("END operand is not a symbol");
+        if (collector.entry)
+            return { { "kind", "NAMED" }, { "name", *collector.entry } };
+        return { { "kind", "DEFAULT" } };
+    }
+
     static std::string name_of(hp::context::id_index id) { return std::string(id.to_string_view()); }
 
     static const hp::context::section* owner_of(const hp::context::address& a) { return a.bases().front().owner; }
@@ -131,7 +141,7 @@ private:
         }
     }
 
-    nlohmann::json sections() const
+    nlohmann::json sections()
     {
         auto result = nlohmann::json::array();
         for (const auto& s : ord_ctx.sections())
@@ -159,7 +169,11 @@ private:
             if (!sym || std::ranges::find(literal_ids, id) != literal_ids.end())
                 continue;
             const auto& attrs = sym->attributes();
-            nlohmann::json row = { { "name", name_of(id) } };
+            nlohmann::json row = {
+                { "name", name_of(id) },
+                { "type", hp::ebcdic_encoding::to_ascii(attrs.type()) },
+                { "length", attrs.length() },
+            };
             if (sym->kind() == hp::context::symbol_value_kind::ABS)
             {
                 row["kind"] = "ABS";
@@ -171,14 +185,9 @@ private:
                 row["kind"] = "RELOC";
                 row["section"] = name_of(owner_of(reloc)->name);
                 row["offset"] = reloc.offset();
-                row["value"] = nullptr;
             }
             else
                 continue;
-            row["length"] = attrs.length();
-            row["type"] = hp::ebcdic_encoding::to_ascii(attrs.type());
-            row["scale"] = attrs.scale();
-            row["integer"] = attrs.integer();
             rows.push_back(std::move(row));
         }
         std::ranges::sort(rows, { }, [](const nlohmann::json& r) { return r.at("name").get<std::string>(); });
@@ -191,33 +200,39 @@ private:
         nlohmann::json row = {
             { "section", name_of(owner_of(s.address)->name) },
             { "offset", s.address.offset() },
-            { "label", s.label ? nlohmann::json(*s.label) : nlohmann::json(nullptr) },
+            { "label", s.label },
             { "mnemonic", s.mnemonic },
-            { "operands", nlohmann::json::array() },
-            { "data", nlohmann::json::array() },
-            { "origin",
-                {
-                    { "file", s.origin.file },
-                    { "line", s.origin.line },
-                    { "macro", s.origin.macro ? nlohmann::json(*s.origin.macro) : nlohmann::json(nullptr) },
-                    { "depth", s.origin.depth },
-                } },
+            { "origin", origin(s.origin) },
         };
         if (const auto* m = std::get_if<machine_body>(&s.body))
         {
+            row["kind"] = "MACHINE";
             row["base_mnemonic"] = m->instruction->name();
             row["format"] = hp::instructions::mach_format_to_string(m->instruction->format());
             row["length"] = m->instruction->size_in_bits() / 8;
             row["operands"] = machine_operands(*m, s, solver);
             collect_literals(*m, solver);
+            return row;
         }
-        else
-        {
-            const bool dc = s.mnemonic == "DC";
-            for (const auto& d : std::get<data_body>(s.body).definitions)
-                row["data"].push_back(data_item(*d, dc, solver));
-        }
+        const auto& data = std::get<data_body>(s.body);
+        row["kind"] = data.initialised ? "DC" : "DS";
+        row["items"] = nlohmann::json::array();
+        for (const auto& d : data.definitions)
+            row["items"].push_back(data_item(*d, data.initialised, solver));
         return row;
+    }
+
+    static nlohmann::json origin(const statement_origin& o)
+    {
+        if (!o.macro)
+            return { { "kind", "OPEN_CODE" }, { "file", o.file }, { "line", o.line } };
+        return {
+            { "kind", "MACRO" },
+            { "file", o.file },
+            { "line", o.line },
+            { "macro", *o.macro },
+            { "depth", o.depth },
+        };
     }
 
     nlohmann::json machine_operands(
@@ -250,13 +265,19 @@ private:
     {
         using enum hp::instructions::machine_operand_type;
         const auto type = fmt.identifier.type;
+        if ((type == DISP || type == DISP_IDX) && fmt.first.type == LENGTH)
+            return {
+                { "kind", "STORAGE_LENGTH" },
+                { "displacement", op.displacement },
+                { "length", op.first_op },
+                { "base", op.second_op },
+            };
         if (type == DISP || type == DISP_IDX)
             return {
                 { "kind", "STORAGE" },
                 { "displacement", op.displacement },
-                { "index", fmt.first.type == LENGTH || fmt.first.type == NONE ? 0 : op.first_op },
+                { "index", fmt.first.type == NONE ? 0 : op.first_op },
                 { "base", op.second_op },
-                { "length", fmt.first.type == LENGTH ? nlohmann::json(op.first_op) : nlohmann::json(nullptr) },
             };
         if (type == RELOC_IMM)
         {
@@ -291,7 +312,7 @@ private:
             literals.push_back({
                 { "section", name_of(owner_of(address)->name) },
                 { "offset", address.offset() },
-                { "data", { data_item(lit->get_data_definition(), true, solver) } },
+                { "item", data_item(lit->get_data_definition(), true, solver) },
             });
         }
     }
@@ -300,18 +321,16 @@ private:
         const hp::expressions::data_definition& d, bool with_nominal, hp::context::dependency_solver& solver)
     {
         const auto dupl = d.evaluate_dupl_factor(solver, hp::drop_diagnostic_op);
-        const auto scale = d.evaluate_scale(solver, hp::drop_diagnostic_op);
-        const auto exponent = d.exponent ? d.exponent->evaluate(solver, hp::drop_diagnostic_op).get_abs() : 0;
-        return {
+        nlohmann::json item = {
             { "type", std::string(1, d.type) },
             { "extension", d.extension ? std::string(1, d.extension) : std::string() },
             { "duplication", dupl.present ? dupl.value : 1 },
             { "length", d.get_length_attribute(solver, hp::drop_diagnostic_op) },
             { "explicit_length", d.length != nullptr },
-            { "scale", scale.present ? scale.value : 0 },
-            { "exponent", exponent },
-            { "nominal", with_nominal ? nominal(d, solver) : nlohmann::json(nullptr) },
         };
+        if (with_nominal)
+            item["nominal"] = nominal(d, solver);
+        return item;
     }
 
     nlohmann::json nominal(const hp::expressions::data_definition& d, hp::context::dependency_solver& solver)
@@ -382,11 +401,8 @@ inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags)
 {
     auto result = nlohmann::json::array();
     for (const auto& d : diags)
-        result.push_back(diagnostic_json(d.code,
-            severity_name(d.severity),
-            d.message,
-            hlasm_plugin::utils::resource::resource_location(d.file_uri).get_local_path_or_uri(),
-            d.diag_range.start.line + 1));
+        result.push_back(
+            diagnostic_json(d.code, severity_name(d.severity), d.message, d.file_uri, d.diag_range.start.line + 1));
     return result;
 }
 
@@ -409,9 +425,11 @@ inline int export_program(
 
     hp::fs_parse_lib_provider provider(syslib);
     hp::library_info_transitional lib_info(provider);
+    const auto source_uri =
+        hlasm_plugin::utils::path::path_to_uri(std::filesystem::absolute(source_path).lexically_normal().string());
     hp::analyzer a(source,
         hp::analyzer_options {
-            hlasm_plugin::utils::resource::resource_location(hlasm_plugin::utils::path::path_to_uri(source_path)),
+            hlasm_plugin::utils::resource::resource_location(source_uri),
             &provider,
             hp::file_is_opencode::yes,
         });
@@ -432,7 +450,7 @@ inline int export_program(
     }
     catch (const std::runtime_error& e)
     {
-        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), source_path, 0) }));
+        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), source_uri, 0) }));
     }
 }
 

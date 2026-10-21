@@ -56,12 +56,15 @@ struct machine_body
 };
 
 struct data_body
-{ std::vector<std::unique_ptr<hp::expressions::data_definition>> definitions; };
+{
+    bool initialised;
+    std::vector<std::unique_ptr<hp::expressions::data_definition>> definitions;
+};
 
 struct recorded_statement
 {
     std::string mnemonic;
-    std::optional<std::string> label;
+    std::string label;
     hp::context::address address;
     hp::context::dependency_evaluation_context dep_ctx;
     statement_origin origin;
@@ -109,6 +112,7 @@ class statement_collector final : public hp::processing::statement_analyzer
 public:
     std::vector<recorded_statement> statements;
     std::optional<std::string> entry;
+    bool entry_unrepresentable = false;
 
     statement_collector(hp::context::hlasm_context& hlasm_ctx, const hp::library_info& lib_info)
         : hlasm_ctx(hlasm_ctx)
@@ -121,7 +125,7 @@ public:
         bool evaluated_model) override
     {
         const auto* res = statement.access_resolved();
-        if (proc_kind != hp::processing::processing_kind::ORDINARY || !res)
+        if (proc_kind != hp::processing::processing_kind::ORDINARY || !res || hlasm_ctx.get_end_reached())
             return false;
         if (!evaluated_model && is_model(*res))
             return false;
@@ -152,11 +156,11 @@ private:
             || (!ops.empty() && ops.front()->type == hp::semantics::operand_type::MODEL);
     }
 
-    static std::optional<std::string> label_of(const hp::processing::resolved_statement& res)
+    static std::string label_of(const hp::processing::resolved_statement& res)
     {
         const auto& label = res.label_ref();
         if (label.type != hp::semantics::label_si_type::ORD)
-            return std::nullopt;
+            return { };
         return std::string(std::get<hp::semantics::ord_symbol_string>(label.value).symbol.to_string_view());
     }
 
@@ -168,7 +172,7 @@ private:
         const auto& scopes = hlasm_ctx.scope_stack();
         const auto& innermost = scopes.back();
         return {
-            open->resource_loc.get_local_path_or_uri(),
+            std::string(open->resource_loc.get_uri()),
             open->pos.line + 1,
             innermost.is_in_macro() ? std::optional<std::string>(innermost.this_macro->id.to_string_view())
                                     : std::nullopt,
@@ -224,18 +228,23 @@ private:
         if (definitions.empty())
             return;
         const auto alignment = definitions.front()->get_alignment();
-        record(res, alignment, 0, data_body { std::move(definitions) });
+        const bool initialised = res.opcode_ref().value == hp::context::id_index("DC");
+        record(res, alignment, 1, data_body { initialised, std::move(definitions) });
     }
 
     void record_entry(const hp::processing::resolved_statement& res)
     {
         const auto& ops = res.operands_ref().value;
-        if (ops.empty() || !ops.front()->access_asm() || !ops.front()->access_asm()->access_expr())
+        if (ops.empty() || ops.front()->type == hp::semantics::operand_type::EMPTY)
             return;
-        const auto* symbol = dynamic_cast<const hp::expressions::mach_expr_symbol*>(
-            ops.front()->access_asm()->access_expr()->expression.get());
+        const auto* asm_op = ops.front()->access_asm();
+        const auto* expr = asm_op ? asm_op->access_expr() : nullptr;
+        const auto* symbol =
+            expr ? dynamic_cast<const hp::expressions::mach_expr_symbol*>(expr->expression.get()) : nullptr;
         if (symbol)
             entry = std::string(symbol->value.to_string_view());
+        else
+            entry_unrepresentable = true;
     }
 };
 

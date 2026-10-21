@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 
 #include "../program_export.h"
+#include "utils/path_conversions.h"
 
 namespace {
 
@@ -32,7 +33,7 @@ struct bridge_run
     int exit_code;
     std::string out;
     std::string err;
-    std::string source_path;
+    std::string source_uri;
 };
 
 std::filesystem::path scratch_dir(const std::string& name)
@@ -46,18 +47,22 @@ std::filesystem::path scratch_dir(const std::string& name)
 void write_file(const std::filesystem::path& path, const std::string& text)
 { std::ofstream(path, std::ios::binary) << text; }
 
-bridge_run run_bridge(const std::string& name, const std::string& source, const std::vector<std::string>& extra = { })
+bridge_run run_bridge_at(
+    const std::filesystem::path& source_path, const std::string& source, const std::vector<std::string>& extra)
 {
-    const auto dir = scratch_dir(name);
-    const auto source_path = (dir / "prog.asm").string();
     write_file(source_path, source);
-    std::vector<std::string> args { source_path };
+    std::vector<std::string> args { source_path.string() };
     args.insert(args.end(), extra.begin(), extra.end());
     std::ostringstream out;
     std::ostringstream err;
     const int code = hlasm_ast_bridge::run(args, out, err);
-    return { code, out.str(), err.str(), source_path };
+    const auto uri =
+        hlasm_plugin::utils::path::path_to_uri(std::filesystem::absolute(source_path).lexically_normal().string());
+    return { code, out.str(), err.str(), uri };
 }
+
+bridge_run run_bridge(const std::string& name, const std::string& source, const std::vector<std::string>& extra = { })
+{ return run_bridge_at(scratch_dir(name) / "prog.asm", source, extra); }
 
 nlohmann::json exported(const bridge_run& r)
 {
@@ -66,41 +71,84 @@ nlohmann::json exported(const bridge_run& r)
     return nlohmann::json::parse(r.out);
 }
 
-nlohmann::json origin(const std::string& file, int line, nlohmann::json macro, int depth)
-{ return { { "file", file }, { "line", line }, { "macro", std::move(macro) }, { "depth", depth } }; }
+nlohmann::json open_code(const std::string& file, int line)
+{ return { { "kind", "OPEN_CODE" }, { "file", file }, { "line", line } }; }
+
+nlohmann::json in_macro(const std::string& file, int line, const std::string& macro, int depth)
+{ return { { "kind", "MACRO" }, { "file", file }, { "line", line }, { "macro", macro }, { "depth", depth } }; }
 
 nlohmann::json reg(int value) { return { { "kind", "REG" }, { "value", value } }; }
 nlohmann::json mask(int value) { return { { "kind", "MASK" }, { "value", value } }; }
 nlohmann::json storage(int displacement, int index, int base)
+{ return { { "kind", "STORAGE" }, { "displacement", displacement }, { "index", index }, { "base", base } }; }
+nlohmann::json storage_length(int displacement, int length, int base)
+{ return { { "kind", "STORAGE_LENGTH" }, { "displacement", displacement }, { "length", length }, { "base", base } }; }
+
+nlohmann::json machine(const std::string& section,
+    int offset,
+    const std::string& mnemonic,
+    const std::string& base_mnemonic,
+    const std::string& format,
+    int length,
+    nlohmann::json operands,
+    nlohmann::json origin)
 {
     return {
-        { "kind", "STORAGE" },
-        { "displacement", displacement },
-        { "index", index },
-        { "base", base },
-        { "length", nullptr },
+        { "kind", "MACHINE" },
+        { "section", section },
+        { "offset", offset },
+        { "label", "" },
+        { "mnemonic", mnemonic },
+        { "base_mnemonic", base_mnemonic },
+        { "format", format },
+        { "length", length },
+        { "operands", std::move(operands) },
+        { "origin", std::move(origin) },
     };
 }
 
-nlohmann::json data_item(const std::string& type,
-    int length,
-    bool explicit_length,
-    nlohmann::json nominal,
-    const std::string& extension = "")
+nlohmann::json ds_item(const std::string& type, int duplication, int length)
 {
     return {
         { "type", type },
-        { "extension", extension },
-        { "duplication", 1 },
+        { "extension", "" },
+        { "duplication", duplication },
         { "length", length },
-        { "explicit_length", explicit_length },
-        { "scale", 0 },
-        { "exponent", 0 },
-        { "nominal", std::move(nominal) },
+        { "explicit_length", false },
     };
 }
 
+nlohmann::json dc_item(const std::string& type, int length, bool explicit_length, nlohmann::json nominal)
+{
+    auto item = ds_item(type, 1, length);
+    item["explicit_length"] = explicit_length;
+    item["nominal"] = std::move(nominal);
+    return item;
+}
+
 nlohmann::json string_nominal(const std::string& value) { return { { "kind", "STRING" }, { "value", value } }; }
+
+nlohmann::json addresses(nlohmann::json value)
+{ return { { "kind", "ADDRESSES" }, { "values", { std::move(value) } } }; }
+
+nlohmann::json reloc(const std::string& section, int offset)
+{ return { { "kind", "RELOC" }, { "section", section }, { "offset", offset } }; }
+
+nlohmann::json reloc_symbol(
+    const std::string& name, const std::string& section, int offset, const std::string& type, int length)
+{
+    return {
+        { "kind", "RELOC" },
+        { "name", name },
+        { "section", section },
+        { "offset", offset },
+        { "type", type },
+        { "length", length },
+    };
+}
+
+nlohmann::json csect(const std::string& name, int length)
+{ return { { "name", name }, { "kind", "CSECT" }, { "length", length } }; }
 
 } // namespace
 
@@ -113,62 +161,32 @@ TEST(program_export, exports_resolved_machine_statement)
         "         BR    14\n"
         "FIELD    DC    F'7'\n"
         "         END   HELLO\n");
-    const auto program = exported(r);
 
-    EXPECT_EQ(program.at("format"), 1);
-    const nlohmann::json expected_sections = { { { "name", "HELLO" }, { "kind", "CSECT" }, { "length", 12 } } };
-    EXPECT_EQ(program.at("sections"), expected_sections);
-    EXPECT_EQ(program.at("entry"), "HELLO");
-    EXPECT_EQ(program.at("externals"), nlohmann::json::array());
-    EXPECT_EQ(program.at("literals"), nlohmann::json::array());
-    EXPECT_EQ(program.at("diagnostics"), nlohmann::json::array());
-
-    const auto& statements = program.at("statements");
-    ASSERT_EQ(statements.size(), 3u);
-    const nlohmann::json expected_la = {
-        { "section", "HELLO" },
-        { "offset", 0 },
-        { "label", nullptr },
-        { "mnemonic", "LA" },
-        { "base_mnemonic", "LA" },
-        { "format", "RX-a" },
-        { "length", 4 },
-        { "operands", { reg(15), storage(8, 0, 12) } },
-        { "data", nlohmann::json::array() },
-        { "origin", origin(r.source_path, 3, nullptr, 0) },
-    };
-    EXPECT_EQ(statements[0], expected_la);
-    const nlohmann::json expected_br = {
-        { "section", "HELLO" },
-        { "offset", 4 },
-        { "label", nullptr },
-        { "mnemonic", "BR" },
-        { "base_mnemonic", "BCR" },
-        { "format", "RR" },
-        { "length", 2 },
-        { "operands", { mask(15), reg(14) } },
-        { "data", nlohmann::json::array() },
-        { "origin", origin(r.source_path, 4, nullptr, 0) },
-    };
-    EXPECT_EQ(statements[1], expected_br);
-    EXPECT_EQ(statements[2].at("offset"), 8);
-    EXPECT_EQ(statements[2].at("label"), "FIELD");
-
-    const nlohmann::json expected_field = {
-        { "name", "FIELD" },
-        { "kind", "RELOC" },
+    nlohmann::json field_dc = {
+        { "kind", "DC" },
         { "section", "HELLO" },
         { "offset", 8 },
-        { "value", nullptr },
-        { "length", 4 },
-        { "type", "F" },
-        { "scale", 0 },
-        { "integer", 31 },
+        { "label", "FIELD" },
+        { "mnemonic", "DC" },
+        { "items", { dc_item("F", 4, false, string_nominal("7")) } },
+        { "origin", open_code(r.source_uri, 5) },
     };
-    const auto& symbols = program.at("symbols");
-    const auto field = std::ranges::find_if(symbols, [](const nlohmann::json& s) { return s.at("name") == "FIELD"; });
-    ASSERT_NE(field, symbols.end());
-    EXPECT_EQ(*field, expected_field);
+    const nlohmann::json expected = {
+        { "format", 1 },
+        { "sections", { csect("HELLO", 12) } },
+        { "symbols", { reloc_symbol("FIELD", "HELLO", 8, "F", 4), reloc_symbol("HELLO", "HELLO", 0, "J", 1) } },
+        { "entry", { { "kind", "NAMED" }, { "name", "HELLO" } } },
+        { "externals", nlohmann::json::array() },
+        { "statements",
+            {
+                machine("HELLO", 0, "LA", "LA", "RX-a", 4, { reg(15), storage(8, 0, 12) }, open_code(r.source_uri, 3)),
+                machine("HELLO", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code(r.source_uri, 4)),
+                field_dc,
+            } },
+        { "literals", nlohmann::json::array() },
+        { "diagnostics", nlohmann::json::array() },
+    };
+    EXPECT_EQ(exported(r), expected);
 }
 
 TEST(program_export, exports_dc_nominals)
@@ -181,50 +199,41 @@ TEST(program_export, exports_dc_nominals)
         "FIELD    DC    F'7'\n"
         "         DC    C'AB',X'C1',F'-1',PL3'12',A(FIELD),V(EXT)\n"
         "         DS    2H\n"
-        "         END   HELLO\n");
+        "         END\n");
     const auto program = exported(r);
 
-    const auto& statements = program.at("statements");
-    ASSERT_EQ(statements.size(), 5u);
-    const nlohmann::json expected_data = {
-        data_item("C", 2, false, string_nominal("AB")),
-        data_item("X", 1, false, string_nominal("C1")),
-        data_item("F", 4, false, string_nominal("-1")),
-        data_item("P", 3, true, string_nominal("12")),
-        data_item("A",
-            4,
-            false,
-            { { "kind", "ADDRESSES" },
-                { "values", { { { "kind", "RELOC" }, { "section", "HELLO" }, { "offset", 8 } } } } }),
-        data_item("V",
-            4,
-            false,
-            { { "kind", "ADDRESSES" }, { "values", { { { "kind", "EXTERNAL" }, { "name", "EXT" } } } } }),
-    };
     const nlohmann::json expected_dc = {
+        { "kind", "DC" },
         { "section", "HELLO" },
         { "offset", 12 },
-        { "label", nullptr },
+        { "label", "" },
         { "mnemonic", "DC" },
-        { "operands", nlohmann::json::array() },
-        { "data", expected_data },
-        { "origin", origin(r.source_path, 6, nullptr, 0) },
+        { "items",
+            {
+                dc_item("C", 2, false, string_nominal("AB")),
+                dc_item("X", 1, false, string_nominal("C1")),
+                dc_item("F", 4, false, string_nominal("-1")),
+                dc_item("P", 3, true, string_nominal("12")),
+                dc_item("A", 4, false, addresses(reloc("HELLO", 8))),
+                dc_item("V", 4, false, addresses({ { "kind", "EXTERNAL" }, { "name", "EXT" } })),
+            } },
+        { "origin", open_code(r.source_uri, 6) },
     };
-    EXPECT_EQ(statements[3], expected_dc);
-
-    nlohmann::json ds_item = data_item("H", 2, false, nullptr);
-    ds_item["duplication"] = 2;
     const nlohmann::json expected_ds = {
+        { "kind", "DS" },
         { "section", "HELLO" },
         { "offset", 32 },
-        { "label", nullptr },
+        { "label", "" },
         { "mnemonic", "DS" },
-        { "operands", nlohmann::json::array() },
-        { "data", { ds_item } },
-        { "origin", origin(r.source_path, 7, nullptr, 0) },
+        { "items", { ds_item("H", 2, 2) } },
+        { "origin", open_code(r.source_uri, 7) },
     };
+    const auto& statements = program.at("statements");
+    ASSERT_EQ(statements.size(), 5u);
+    EXPECT_EQ(statements[3], expected_dc);
     EXPECT_EQ(statements[4], expected_ds);
     EXPECT_EQ(program.at("externals"), nlohmann::json { "EXT" });
+    EXPECT_EQ(program.at("entry"), (nlohmann::json { { "kind", "DEFAULT" } }));
 }
 
 TEST(program_export, exports_macro_origin)
@@ -244,17 +253,12 @@ TEST(program_export, exports_macro_origin)
         "         RET\n"
         "         END\n",
         { "--syslib", dir.string() });
-    const auto program = exported(r);
 
-    const auto& statements = program.at("statements");
-    ASSERT_EQ(statements.size(), 2u);
-    EXPECT_EQ(statements[0].at("mnemonic"), "LA");
-    EXPECT_EQ(statements[0].at("section"), "");
-    EXPECT_EQ(statements[0].at("offset"), 0);
-    EXPECT_EQ(statements[0].at("origin"), origin(r.source_path, 5, "M", 1));
-    EXPECT_EQ(statements[1].at("mnemonic"), "BR");
-    EXPECT_EQ(statements[1].at("offset"), 4);
-    EXPECT_EQ(statements[1].at("origin"), origin(r.source_path, 6, "RET", 1));
+    const nlohmann::json expected = {
+        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0) }, in_macro(r.source_uri, 5, "M", 1)),
+        machine("", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, in_macro(r.source_uri, 6, "RET", 1)),
+    };
+    EXPECT_EQ(exported(r).at("statements"), expected);
 }
 
 TEST(program_export, refuses_assembly_errors)
@@ -269,7 +273,7 @@ TEST(program_export, refuses_assembly_errors)
     ASSERT_EQ(diagnostics.size(), 1u);
     EXPECT_EQ(diagnostics[0].at("code"), "M120");
     EXPECT_EQ(diagnostics[0].at("severity"), "ERROR");
-    EXPECT_EQ(diagnostics[0].at("file"), r.source_path);
+    EXPECT_EQ(diagnostics[0].at("file"), r.source_uri);
     EXPECT_EQ(diagnostics[0].at("line"), 1);
 }
 
@@ -284,23 +288,19 @@ TEST(program_export, exports_literal_pool)
         "         END\n");
     const auto program = exported(r);
 
-    const nlohmann::json here = {
-        { "kind", "ADDRESSES" },
-        { "values", { { { "kind", "RELOC" }, { "section", "HELLO" }, { "offset", 4 } } } },
-    };
     const nlohmann::json expected_literals = {
-        { { "section", "HELLO" }, { "offset", 16 }, { "data", { data_item("F", 4, false, string_nominal("5")) } } },
-        { { "section", "HELLO" }, { "offset", 20 }, { "data", { data_item("A", 4, false, here) } } },
+        { { "section", "HELLO" }, { "offset", 16 }, { "item", dc_item("F", 4, false, string_nominal("5")) } },
+        { { "section", "HELLO" }, { "offset", 20 }, { "item", dc_item("A", 4, false, addresses(reloc("HELLO", 4))) } },
     };
     EXPECT_EQ(program.at("literals"), expected_literals);
-    const auto& statements = program.at("statements");
-    EXPECT_EQ(statements.at(0).at("operands"), (nlohmann::json { reg(1), storage(16, 0, 12) }));
-    EXPECT_EQ(statements.at(1).at("operands"), (nlohmann::json { reg(2), storage(20, 0, 12) }));
-    EXPECT_EQ(statements.at(2).at("operands"), (nlohmann::json { reg(3), storage(16, 0, 12) }));
-    const auto& symbols = program.at("symbols");
-    EXPECT_EQ(symbols.size(), 1u);
-    EXPECT_EQ(symbols.at(0).at("name"), "HELLO");
-    EXPECT_EQ(program.at("sections").at(0).at("length"), 24);
+    const nlohmann::json expected_statements = {
+        machine("HELLO", 0, "L", "L", "RX-a", 4, { reg(1), storage(16, 0, 12) }, open_code(r.source_uri, 3)),
+        machine("HELLO", 4, "L", "L", "RX-a", 4, { reg(2), storage(20, 0, 12) }, open_code(r.source_uri, 4)),
+        machine("HELLO", 8, "L", "L", "RX-a", 4, { reg(3), storage(16, 0, 12) }, open_code(r.source_uri, 5)),
+    };
+    EXPECT_EQ(program.at("statements"), expected_statements);
+    EXPECT_EQ(program.at("symbols"), (nlohmann::json { reloc_symbol("HELLO", "HELLO", 0, "J", 1) }));
+    EXPECT_EQ(program.at("sections"), (nlohmann::json { csect("HELLO", 24) }));
 }
 
 TEST(program_export, exports_relative_branch_targets)
@@ -315,12 +315,62 @@ TEST(program_export, exports_relative_branch_targets)
 
     const auto& statements = program.at("statements");
     ASSERT_EQ(statements.size(), 3u);
-    const nlohmann::json to_next = {
-        mask(15),
-        { { "kind", "RELOC_IMM" }, { "section", "HELLO" }, { "offset", 8 } },
-    };
-    EXPECT_EQ(statements[0].at("base_mnemonic"), "BRC");
-    EXPECT_EQ(statements[0].at("operands"), to_next);
+    const nlohmann::json to_next = { mask(15), { { "kind", "RELOC_IMM" }, { "section", "HELLO" }, { "offset", 8 } } };
+    EXPECT_EQ(statements[0], machine("HELLO", 0, "J", "BRC", "RI-c", 4, to_next, open_code(r.source_uri, 2)));
     const nlohmann::json counted = { mask(15), { { "kind", "IMM" }, { "value", 4 } } };
-    EXPECT_EQ(statements[1].at("operands"), counted);
+    EXPECT_EQ(statements[1], machine("HELLO", 4, "J", "BRC", "RI-c", 4, counted, open_code(r.source_uri, 3)));
+}
+
+TEST(program_export, exports_ss_operand_lengths)
+{
+    const auto r = run_bridge("ss",
+        "HELLO    CSECT\n"
+        "         USING *,12\n"
+        "         MVC   A(3),B\n"
+        "         MVC   A,B\n"
+        "A        DS    CL5\n"
+        "B        DS    CL5\n"
+        "         END\n");
+    const auto program = exported(r);
+    const auto& statements = program.at("statements");
+
+    ASSERT_EQ(statements.size(), 4u);
+    EXPECT_EQ(statements[0],
+        machine("HELLO",
+            0,
+            "MVC",
+            "MVC",
+            "SS-a",
+            6,
+            { storage_length(12, 3, 12), storage(17, 0, 12) },
+            open_code(r.source_uri, 3)));
+    EXPECT_EQ(statements[1],
+        machine("HELLO",
+            6,
+            "MVC",
+            "MVC",
+            "SS-a",
+            6,
+            { storage_length(12, 5, 12), storage(17, 0, 12) },
+            open_code(r.source_uri, 4)));
+}
+
+TEST(program_export, ignores_statements_after_end_and_reports_an_absolute_uri)
+{
+    const auto dir = scratch_dir("after_end");
+    const auto relative = std::filesystem::relative(dir / "after_end.asm", std::filesystem::current_path());
+    const auto r = run_bridge_at(relative,
+        "HELLO    CSECT\n"
+        "         BR    14\n"
+        "         END   HELLO\n"
+        "         LA    1,1\n",
+        { });
+    const auto program = exported(r);
+
+    const auto absolute_uri =
+        hlasm_plugin::utils::path::path_to_uri((std::filesystem::canonical(dir) / "after_end.asm").string());
+    EXPECT_EQ(program.at("statements"),
+        (nlohmann::json {
+            machine("HELLO", 0, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code(absolute_uri, 2)) }));
+    EXPECT_EQ(program.at("sections"), (nlohmann::json { csect("HELLO", 2) }));
 }
