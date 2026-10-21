@@ -12,20 +12,16 @@
  *   Broadcom, Inc. - initial API and implementation
  */
 
-// hlasm_ast_bridge CLI: `--instruction-table` writes the instruction table as JSON to stdout.
+// hlasm_ast_bridge CLI: `--instruction-table` writes the instruction table, `<src> [--syslib dir]...` the program.
 
 #include <iostream>
-#include <string_view>
+#include <string>
+#include <vector>
 
-#include "instruction_table_export.h"
+#include "program_export.h"
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::string_view(argv[1]) == "--instruction-table")
-    {
-        hlasm_ast_bridge::export_instruction_table(std::cout);
-        return 0;
-    }
-    std::cerr << "usage: hlasm_ast_bridge --instruction-table\n";
-    return 2;
+    const std::vector<std::string> args(argv + 1, argv + argc);
+    return hlasm_ast_bridge::run(args, std::cout, std::cerr);
 }

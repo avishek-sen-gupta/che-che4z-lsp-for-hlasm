@@ -15,6 +15,8 @@ project(hlasm_ast_bridge)
 add_executable(hlasm_ast_bridge
     main.cpp
     instruction_table_export.h
+    program_export.h
+    statement_collector.h
 )
 
 target_compile_features(hlasm_ast_bridge PRIVATE cxx_std_20)
@@ -24,6 +26,7 @@ set_target_properties(hlasm_ast_bridge PROPERTIES CXX_EXTENSIONS OFF)
 target_include_directories(hlasm_ast_bridge
     PRIVATE
     ../parser_library/src
+    ../hlasm_export
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -36,6 +39,7 @@ target_link_options(hlasm_ast_bridge PRIVATE ${HLASM_EXTRA_LINKER_FLAGS})
 if(BUILD_TESTING)
     add_executable(hlasm_ast_bridge_test
         test/instruction_table_test.cpp
+        test/program_export_test.cpp
     )
 
     target_compile_features(hlasm_ast_bridge_test PRIVATE cxx_std_20)
@@ -45,6 +49,7 @@ if(BUILD_TESTING)
     target_include_directories(hlasm_ast_bridge_test
         PRIVATE
         ../parser_library/src
+        ../hlasm_export
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
 

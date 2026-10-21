@@ -30,6 +30,8 @@ class dependency_solver;
 namespace instructions {
 class machine_instruction;
 class mnemonic_code;
+struct machine_operand_format;
+struct mnemonic_transformation;
 } // namespace instructions
 
 namespace semantics {
@@ -61,6 +63,20 @@ struct machine_operand final
     [[maybe_unused]] bool first_op_derived;
     unsigned char source;
 };
+
+machine_operand* evaluate_operands(machine_operand* out,
+    const instructions::machine_instruction& mi,
+    std::string_view mi_name,
+    std::span<const std::unique_ptr<semantics::operand>> ops,
+    std::span<const instructions::machine_operand_format> formats,
+    std::span<const instructions::mnemonic_transformation> transforms,
+    context::dependency_solver& solver,
+    diagnostic_collector& add_diagnostic);
+
+machine_operand* apply_transforms(machine_operand* out,
+    std::span<const machine_operand> ops,
+    size_t max_op_count,
+    std::span<const instructions::mnemonic_transformation> transforms);
 
 } // namespace hlasm_plugin::parser_library::checking
 
