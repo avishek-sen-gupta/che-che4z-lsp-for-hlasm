@@ -374,3 +374,25 @@ TEST(program_export, ignores_statements_after_end_and_reports_an_absolute_uri)
             machine("HELLO", 0, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code(absolute_uri, 2)) }));
     EXPECT_EQ(program.at("sections"), (nlohmann::json { csect("HELLO", 2) }));
 }
+
+TEST(program_export, names_the_open_code_source_verbatim)
+{
+    const auto ok = run_bridge("source_name",
+        "         MACRO\n"
+        "         M\n"
+        "         LA    1,1\n"
+        "         MEND\n"
+        "         M\n"
+        "         BR    14\n"
+        "         END\n",
+        { "--source-name", "src/hello.asm" });
+    const auto bad = run_bridge("source_name_error", "         LA    99,0\n", { "--source-name", "src/hello.asm" });
+
+    const nlohmann::json expected = {
+        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0) }, in_macro("src/hello.asm", 5, "M", 1)),
+        machine("", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code("src/hello.asm", 6)),
+    };
+    EXPECT_EQ(exported(ok).at("statements"), expected);
+    EXPECT_EQ(bad.exit_code, 2);
+    EXPECT_EQ(nlohmann::json::parse(bad.err).at("diagnostics")[0].at("file"), "src/hello.asm");
+}

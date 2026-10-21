@@ -52,10 +52,19 @@ constexpr int program_format = 1;
 
 using hp::context::section_kind;
 
+struct source_naming
+{
+    std::string uri;
+    std::string name;
+
+    std::string file_of(const std::string& file) const { return !name.empty() && file == uri ? name : file; }
+};
+
 class program_exporter
 {
     hp::context::ordinary_assembly_context& ord_ctx;
     const hp::library_info& lib_info;
+    const source_naming& naming;
     std::set<std::string> externals;
     std::vector<nlohmann::json> literals;
     std::vector<hp::context::id_index> literal_ids;
@@ -75,9 +84,11 @@ class program_exporter
     };
 
 public:
-    program_exporter(hp::context::ordinary_assembly_context& ord_ctx, const hp::library_info& lib_info)
+    program_exporter(
+        hp::context::ordinary_assembly_context& ord_ctx, const hp::library_info& lib_info, const source_naming& naming)
         : ord_ctx(ord_ctx)
         , lib_info(lib_info)
+        , naming(naming)
     { }
 
     nlohmann::json program(const statement_collector& collector, nlohmann::json diagnostics)
@@ -222,13 +233,13 @@ private:
         return row;
     }
 
-    static nlohmann::json origin(const statement_origin& o)
+    nlohmann::json origin(const statement_origin& o) const
     {
         if (!o.macro)
-            return { { "kind", "OPEN_CODE" }, { "file", o.file }, { "line", o.line } };
+            return { { "kind", "OPEN_CODE" }, { "file", naming.file_of(o.file) }, { "line", o.line } };
         return {
             { "kind", "MACRO" },
-            { "file", o.file },
+            { "file", naming.file_of(o.file) },
             { "line", o.line },
             { "macro", *o.macro },
             { "depth", o.depth },
@@ -397,12 +408,12 @@ inline nlohmann::json diagnostic_json(
     };
 }
 
-inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags)
+inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags, const source_naming& naming)
 {
     auto result = nlohmann::json::array();
     for (const auto& d : diags)
         result.push_back(
-            diagnostic_json(d.code, severity_name(d.severity), d.message, d.file_uri, d.diag_range.start.line + 1));
+            diagnostic_json(d.code, severity_name(d.severity), d.message, naming.file_of(d.file_uri), d.diag_range.start.line + 1));
     return result;
 }
 
@@ -412,8 +423,11 @@ inline int refuse(std::ostream& err, nlohmann::json diagnostics)
     return 2;
 }
 
-inline int export_program(
-    const std::string& source_path, const std::vector<std::string>& syslib, std::ostream& out, std::ostream& err)
+inline int export_program(const std::string& source_path,
+    const std::string& source_name,
+    const std::vector<std::string>& syslib,
+    std::ostream& out,
+    std::ostream& err)
 {
     std::ifstream in(source_path, std::ios::binary);
     if (!in)
@@ -427,6 +441,7 @@ inline int export_program(
     hp::library_info_transitional lib_info(provider);
     const auto source_uri =
         hlasm_plugin::utils::path::path_to_uri(std::filesystem::absolute(source_path).lexically_normal().string());
+    const source_naming naming { source_uri, source_name };
     hp::analyzer a(source,
         hp::analyzer_options {
             hlasm_plugin::utils::resource::resource_location(source_uri),
@@ -438,19 +453,19 @@ inline int export_program(
     a.analyze();
 
     const auto diags = a.diags();
-    auto diagnostics = diagnostics_json(diags);
+    auto diagnostics = diagnostics_json(diags, naming);
     if (std::ranges::any_of(diags, [](const auto& d) { return d.severity == hp::diagnostic_severity::error; }))
         return refuse(err, std::move(diagnostics));
 
     try
     {
-        program_exporter exporter(a.hlasm_ctx().ord_ctx, lib_info);
+        program_exporter exporter(a.hlasm_ctx().ord_ctx, lib_info, naming);
         out << exporter.program(collector, std::move(diagnostics)).dump() << '\n';
         return 0;
     }
     catch (const std::runtime_error& e)
     {
-        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), source_uri, 0) }));
+        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), naming.file_of(source_uri), 0) }));
     }
 }
 
@@ -463,19 +478,22 @@ inline int run(std::span<const std::string> args, std::ostream& out, std::ostrea
     }
     std::vector<std::string> sources;
     std::vector<std::string> syslib;
+    std::string source_name;
     for (size_t i = 0; i < args.size(); ++i)
     {
         if (args[i] == "--syslib" && i + 1 < args.size())
             syslib.push_back(args[++i]);
+        else if (args[i] == "--source-name" && i + 1 < args.size())
+            source_name = args[++i];
         else
             sources.push_back(args[i]);
     }
     if (sources.size() != 1 || sources.front().starts_with("--"))
     {
-        err << "usage: hlasm_ast_bridge --instruction-table | hlasm_ast_bridge <src> [--syslib dir]...\n";
+        err << "usage: hlasm_ast_bridge --instruction-table | hlasm_ast_bridge <src> [--source-name name] [--syslib dir]...\n";
         return 1;
     }
-    return export_program(sources.front(), syslib, out, err);
+    return export_program(sources.front(), source_name, syslib, out, err);
 }
 
 } // namespace hlasm_ast_bridge
