@@ -384,6 +384,22 @@ TEST(program_export, exports_the_written_storage_address)
     EXPECT_EQ(statements[2].at("operands"), (nlohmann::json { reg(2), storage(6, 5, 3, absolute(6)) }));
 }
 
+TEST(program_export, refuses_a_complex_relocatable_storage_address)
+{
+    const auto r = run_bridge("complex_written",
+        "HELLO    CSECT\n"
+        "         USING *,12\n"
+        "         EX    2,MOVE+MOVE\n"
+        "MOVE     MVC   0(0,3),0(4)\n"
+        "         END\n");
+
+    EXPECT_EQ(r.exit_code, 2);
+    EXPECT_EQ(r.out, "");
+    const auto diagnostics = nlohmann::json::parse(r.err).at("diagnostics");
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_EQ(diagnostics[0].at("code"), "ME009");
+}
+
 TEST(program_export, ignores_statements_after_end_and_reports_an_absolute_uri)
 {
     const auto dir = scratch_dir("after_end");

@@ -315,7 +315,7 @@ private:
     {
         const auto v =
             m.operands[op.source]->access_mach()->displacement->evaluate(solver, hp::drop_diagnostic_op);
-        if (v.value_kind() != hp::context::symbol_value_kind::RELOC)
+        if (v.value_kind() != hp::context::symbol_value_kind::RELOC || !v.get_reloc().is_simple())
             return { { "kind", "ABS" }, { "value", op.displacement } };
         return {
             { "kind", "RELOC" },
