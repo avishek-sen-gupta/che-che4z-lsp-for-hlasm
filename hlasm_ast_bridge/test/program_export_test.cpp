@@ -15,6 +15,7 @@
 // The statement-stream export: resolved statements, symbols, sections and literals of one assembly.
 
 #include <filesystem>
+#include <map>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -440,4 +441,34 @@ TEST(program_export, names_the_open_code_source_verbatim)
     EXPECT_EQ(exported(ok).at("statements"), expected);
     EXPECT_EQ(bad.exit_code, 2);
     EXPECT_EQ(nlohmann::json::parse(bad.err).at("diagnostics")[0].at("file"), "src/hello.asm");
+}
+
+TEST(program_export, resolves_negated_load_store_on_condition_suffixes_to_the_principles_of_operation_masks)
+{
+    const std::vector<std::pair<std::string, std::string>> bases = {
+        { "LOC", "1,0(12)" },
+        { "LOCG", "1,0(12)" },
+        { "LOCR", "1,2" },
+        { "LOCGR", "1,2" },
+        { "STOC", "1,0(12)" },
+        { "STOCG", "1,0(12)" },
+    };
+    const std::vector<std::pair<std::string, int>> suffixes = {
+        { "NE", 7 }, { "NZ", 7 }, { "NL", 11 }, { "NM", 11 }, { "NH", 13 }, { "NP", 13 },
+    };
+    std::string source = "T        CSECT\n";
+    std::map<std::string, nlohmann::json> expected;
+    for (const auto& [base, operands] : bases)
+        for (const auto& [suffix, value] : suffixes)
+        {
+            source += "         " + base + suffix + " " + operands + "\n";
+            expected[base + suffix] = { base, mask(value) };
+        }
+    source += "         END\n";
+
+    const auto program = exported(run_bridge("negated_suffixes", source));
+    std::map<std::string, nlohmann::json> resolved;
+    for (const auto& s : program["statements"])
+        resolved[s["mnemonic"].get<std::string>()] = { s["base_mnemonic"], s["operands"].back() };
+    EXPECT_EQ(resolved, expected);
 }
