@@ -289,6 +289,7 @@ private:
                 { "displacement", op.displacement },
                 { "index", fmt.first.type == NONE ? 0 : op.first_op },
                 { "base", op.second_op },
+                { "written", written_address(op, m, solver) },
             };
         if (type == RELOC_IMM)
         {
@@ -306,6 +307,21 @@ private:
             return { { "kind", "IMM" }, { "value", op.displacement } };
         }
         return { { "kind", operand_type_name(type) }, { "value", op.displacement } };
+    }
+
+    nlohmann::json written_address(const hp::checking::machine_operand& op,
+        const machine_body& m,
+        hp::context::dependency_solver& solver) const
+    {
+        const auto v =
+            m.operands[op.source]->access_mach()->displacement->evaluate(solver, hp::drop_diagnostic_op);
+        if (v.value_kind() != hp::context::symbol_value_kind::RELOC)
+            return { { "kind", "ABS" }, { "value", op.displacement } };
+        return {
+            { "kind", "RELOC" },
+            { "section", name_of(owner_of(v.get_reloc())->name) },
+            { "offset", v.get_reloc().offset() },
+        };
     }
 
     void collect_literals(const machine_body& m, hp::context::dependency_solver& solver)

@@ -79,8 +79,16 @@ nlohmann::json in_macro(const std::string& file, int line, const std::string& ma
 
 nlohmann::json reg(int value) { return { { "kind", "REG" }, { "value", value } }; }
 nlohmann::json mask(int value) { return { { "kind", "MASK" }, { "value", value } }; }
-nlohmann::json storage(int displacement, int index, int base)
-{ return { { "kind", "STORAGE" }, { "displacement", displacement }, { "index", index }, { "base", base } }; }
+nlohmann::json storage(int displacement, int index, int base, nlohmann::json written)
+{
+    return {
+        { "kind", "STORAGE" },
+        { "displacement", displacement },
+        { "index", index },
+        { "base", base },
+        { "written", std::move(written) },
+    };
+}
 nlohmann::json storage_length(int displacement, int length, int base)
 { return { { "kind", "STORAGE_LENGTH" }, { "displacement", displacement }, { "length", length }, { "base", base } }; }
 
@@ -134,6 +142,8 @@ nlohmann::json addresses(nlohmann::json value)
 nlohmann::json reloc(const std::string& section, int offset)
 { return { { "kind", "RELOC" }, { "section", section }, { "offset", offset } }; }
 
+nlohmann::json absolute(int value) { return { { "kind", "ABS" }, { "value", value } }; }
+
 nlohmann::json reloc_symbol(
     const std::string& name, const std::string& section, int offset, const std::string& type, int length)
 {
@@ -179,7 +189,7 @@ TEST(program_export, exports_resolved_machine_statement)
         { "externals", nlohmann::json::array() },
         { "statements",
             {
-                machine("HELLO", 0, "LA", "LA", "RX-a", 4, { reg(15), storage(8, 0, 12) }, open_code(r.source_uri, 3)),
+                machine("HELLO", 0, "LA", "LA", "RX-a", 4, { reg(15), storage(8, 0, 12, reloc("HELLO", 8)) }, open_code(r.source_uri, 3)),
                 machine("HELLO", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code(r.source_uri, 4)),
                 field_dc,
             } },
@@ -255,7 +265,7 @@ TEST(program_export, exports_macro_origin)
         { "--syslib", dir.string() });
 
     const nlohmann::json expected = {
-        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0) }, in_macro(r.source_uri, 5, "M", 1)),
+        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0, absolute(1)) }, in_macro(r.source_uri, 5, "M", 1)),
         machine("", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, in_macro(r.source_uri, 6, "RET", 1)),
     };
     EXPECT_EQ(exported(r).at("statements"), expected);
@@ -294,9 +304,9 @@ TEST(program_export, exports_literal_pool)
     };
     EXPECT_EQ(program.at("literals"), expected_literals);
     const nlohmann::json expected_statements = {
-        machine("HELLO", 0, "L", "L", "RX-a", 4, { reg(1), storage(16, 0, 12) }, open_code(r.source_uri, 3)),
-        machine("HELLO", 4, "L", "L", "RX-a", 4, { reg(2), storage(20, 0, 12) }, open_code(r.source_uri, 4)),
-        machine("HELLO", 8, "L", "L", "RX-a", 4, { reg(3), storage(16, 0, 12) }, open_code(r.source_uri, 5)),
+        machine("HELLO", 0, "L", "L", "RX-a", 4, { reg(1), storage(16, 0, 12, reloc("HELLO", 16)) }, open_code(r.source_uri, 3)),
+        machine("HELLO", 4, "L", "L", "RX-a", 4, { reg(2), storage(20, 0, 12, reloc("HELLO", 20)) }, open_code(r.source_uri, 4)),
+        machine("HELLO", 8, "L", "L", "RX-a", 4, { reg(3), storage(16, 0, 12, reloc("HELLO", 16)) }, open_code(r.source_uri, 5)),
     };
     EXPECT_EQ(program.at("statements"), expected_statements);
     EXPECT_EQ(program.at("symbols"), (nlohmann::json { reloc_symbol("HELLO", "HELLO", 0, "J", 1) }));
@@ -342,7 +352,7 @@ TEST(program_export, exports_ss_operand_lengths)
             "MVC",
             "SS-a",
             6,
-            { storage_length(12, 3, 12), storage(17, 0, 12) },
+            { storage_length(12, 3, 12), storage(17, 0, 12, reloc("HELLO", 17)) },
             open_code(r.source_uri, 3)));
     EXPECT_EQ(statements[1],
         machine("HELLO",
@@ -351,8 +361,27 @@ TEST(program_export, exports_ss_operand_lengths)
             "MVC",
             "SS-a",
             6,
-            { storage_length(12, 5, 12), storage(17, 0, 12) },
+            { storage_length(12, 5, 12), storage(17, 0, 12, reloc("HELLO", 17)) },
             open_code(r.source_uri, 4)));
+}
+
+TEST(program_export, exports_the_written_storage_address)
+{
+    const auto r = run_bridge("written",
+        "HELLO    CSECT\n"
+        "         USING *,12\n"
+        "         EX    2,MOVE\n"
+        "         EX    2,MOVE(5)\n"
+        "         EX    2,6(5,3)\n"
+        "MOVE     MVC   0(0,3),0(4)\n"
+        "         END\n");
+    const auto program = exported(r);
+    const auto& statements = program.at("statements");
+
+    ASSERT_EQ(statements.size(), 4u);
+    EXPECT_EQ(statements[0].at("operands"), (nlohmann::json { reg(2), storage(12, 0, 12, reloc("HELLO", 12)) }));
+    EXPECT_EQ(statements[1].at("operands"), (nlohmann::json { reg(2), storage(12, 5, 12, reloc("HELLO", 12)) }));
+    EXPECT_EQ(statements[2].at("operands"), (nlohmann::json { reg(2), storage(6, 5, 3, absolute(6)) }));
 }
 
 TEST(program_export, ignores_statements_after_end_and_reports_an_absolute_uri)
@@ -389,7 +418,7 @@ TEST(program_export, names_the_open_code_source_verbatim)
     const auto bad = run_bridge("source_name_error", "         LA    99,0\n", { "--source-name", "src/hello.asm" });
 
     const nlohmann::json expected = {
-        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0) }, in_macro("src/hello.asm", 5, "M", 1)),
+        machine("", 0, "LA", "LA", "RX-a", 4, { reg(1), storage(1, 0, 0, absolute(1)) }, in_macro("src/hello.asm", 5, "M", 1)),
         machine("", 4, "BR", "BCR", "RR", 2, { mask(15), reg(14) }, open_code("src/hello.asm", 6)),
     };
     EXPECT_EQ(exported(ok).at("statements"), expected);
