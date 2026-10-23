@@ -124,6 +124,7 @@ public:
     std::vector<recorded_statement> statements;
     std::optional<std::string> entry;
     bool entry_unrepresentable = false;
+    std::optional<std::string> unrepresentable;
     std::vector<mode_setting> amodes;
     std::vector<mode_setting> rmodes;
 
@@ -266,18 +267,25 @@ private:
         {
             const auto* expr = expr_operand(*o);
             if (!expr)
-                return;
+                return refuse(res);
             operands.push_back(clone_expr(expr->expression));
         }
         record(res, hp::context::doubleword, 1, ccw_body { std::move(operands) });
     }
 
-    static void record_mode(const hp::processing::resolved_statement& res, std::vector<mode_setting>& modes)
+    void record_mode(const hp::processing::resolved_statement& res, std::vector<mode_setting>& modes)
     {
         const auto& ops = res.operands_ref().value;
         const auto* expr = ops.size() == 1 ? expr_operand(*ops.front()) : nullptr;
-        if (expr)
-            modes.push_back({ label_of(res), expr->get_value() });
+        if (!expr)
+            return refuse(res);
+        modes.push_back({ label_of(res), expr->get_value() });
+    }
+
+    void refuse(const hp::processing::resolved_statement& res)
+    {
+        unrepresentable = "operands of " + std::string(res.opcode_ref().value.to_string_view()) + " at line "
+            + std::to_string(origin_of().line) + " are not expressions";
     }
 
     void record_entry(const hp::processing::resolved_statement& res)
