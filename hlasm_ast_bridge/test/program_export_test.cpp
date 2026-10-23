@@ -472,3 +472,24 @@ TEST(program_export, resolves_negated_load_store_on_condition_suffixes_to_the_pr
         resolved[s["mnemonic"].get<std::string>()] = { s["base_mnemonic"], s["operands"].back() };
     EXPECT_EQ(resolved, expected);
 }
+
+TEST(program_export, exports_vzero_as_vgbm_of_its_register_with_a_zero_mask)
+{
+    const auto program = exported(run_bridge("vzero",
+        "T        CSECT\n"
+        "         VZERO 5\n"
+        "         VONE  20\n"
+        "         END\n"));
+    const nlohmann::json vector5 = { { "kind", "VEC_REG" }, { "value", 5 } };
+    const nlohmann::json vector20 = { { "kind", "VEC_REG" }, { "value", 20 } };
+    const nlohmann::json zero = { { "kind", "IMM" }, { "value", 0 } };
+    const nlohmann::json ones = { { "kind", "IMM" }, { "value", 65535 } };
+    std::vector<nlohmann::json> resolved;
+    for (const auto& s : program["statements"])
+        resolved.push_back({ s["mnemonic"], s["base_mnemonic"], s["operands"] });
+    const std::vector<nlohmann::json> expected = {
+        { "VZERO", "VGBM", { vector5, zero } },
+        { "VONE", "VGBM", { vector20, ones } },
+    };
+    EXPECT_EQ(resolved, expected);
+}
