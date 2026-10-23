@@ -542,10 +542,14 @@ TEST(program_export, evaluates_the_location_counter_at_each_dc_operand)
         "         END\n"));
     const auto& statements = program.at("statements");
 
+    const auto once = [](nlohmann::json value) {
+        return nlohmann::json { { "kind", "ADDRESSES_PER_COPY" }, { "copies", { { std::move(value) } } } };
+    };
     ASSERT_EQ(statements.size(), 2u);
-    EXPECT_EQ(statements[0].at("items")[1].at("nominal"), addresses(reloc("T", 4)));
-    EXPECT_EQ(statements[1].at("items")[1].at("nominal"), addresses(reloc("T", 12)));
-    EXPECT_EQ(statements[1].at("items")[2].at("nominal"), addresses(absolute(16)));
+    EXPECT_EQ(statements[0].at("items")[0].at("nominal"), addresses(absolute(0)));
+    EXPECT_EQ(statements[0].at("items")[1].at("nominal"), once(reloc("T", 4)));
+    EXPECT_EQ(statements[1].at("items")[1].at("nominal"), once(reloc("T", 12)));
+    EXPECT_EQ(statements[1].at("items")[2].at("nominal"), once(absolute(16)));
 }
 
 TEST(program_export, resolves_s_constants_through_the_active_using)
@@ -641,4 +645,28 @@ TEST(program_export, exports_the_macro_call_stack_of_each_diagnostic)
             { { "file", r.source_uri }, { "line", 7 } },
             { { "file", r.source_uri }, { "line", 9 } },
         }));
+}
+
+TEST(program_export, evaluates_the_location_counter_at_each_value_of_each_copy)
+{
+    const auto program = exported(run_bridge("value_loctr",
+        "T        CSECT\n"
+        "         BR    14\n"
+        "         DC    2A(*),A(*,*)\n"
+        "         DC    2A(*,*+2)\n"
+        "         DC    2A(0,4)\n"
+        "         END\n"));
+    const auto& statements = program.at("statements");
+
+    const auto per_copy = [](nlohmann::json copies) {
+        return nlohmann::json { { "kind", "ADDRESSES_PER_COPY" }, { "copies", std::move(copies) } };
+    };
+    ASSERT_EQ(statements.size(), 4u);
+    EXPECT_EQ(statements[1].at("items")[0].at("nominal"),
+        per_copy({ nlohmann::json { reloc("T", 4) }, nlohmann::json { reloc("T", 8) } }));
+    EXPECT_EQ(statements[1].at("items")[1].at("nominal"), per_copy({ { reloc("T", 12), reloc("T", 16) } }));
+    EXPECT_EQ(statements[2].at("items")[0].at("nominal"),
+        per_copy({ { reloc("T", 20), reloc("T", 26) }, { reloc("T", 28), reloc("T", 34) } }));
+    EXPECT_EQ(statements[3].at("items")[0].at("nominal"),
+        (nlohmann::json { { "kind", "ADDRESSES" }, { "values", { absolute(0), absolute(4) } } }));
 }

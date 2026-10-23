@@ -279,7 +279,7 @@ private:
                     hp::checking::round_up(bit, uint64_t { 8 }), uint64_t(d->get_alignment().boundary) * 8);
             const auto at = start + int((bit - start_bit) / 8);
             hp::processing::data_def_dependency_solver at_operand(solver, &at);
-            items.push_back(data_item(*d, data.initialised, at_operand, at.offset(), bit % 8));
+            items.push_back(data_item(*d, data.initialised, at_operand, at.offset(), bit % 8, &at));
             bit += d->evaluate_total_length(at_operand, instr, hp::drop_diagnostic_op);
         }
         return items;
@@ -400,7 +400,8 @@ private:
         bool with_nominal,
         hp::context::dependency_solver& solver,
         int offset,
-        uint64_t bit_offset)
+        uint64_t bit_offset,
+        const hp::context::address* operand = nullptr)
     {
         const auto dupl = d.evaluate_dupl_factor(solver, hp::drop_diagnostic_op);
         const bool in_bits = d.length_type == hp::expressions::data_definition::length_type::BIT;
@@ -419,20 +420,49 @@ private:
             { "bit_offset", bit_offset },
         };
         if (with_nominal)
-            item["nominal"] = nominal(d, solver);
+            item["nominal"] = nominal(d, solver, operand, length);
         return item;
     }
 
-    nlohmann::json nominal(const hp::expressions::data_definition& d, hp::context::dependency_solver& solver)
+    nlohmann::json nominal(const hp::expressions::data_definition& d,
+        hp::context::dependency_solver& solver,
+        const hp::context::address* operand,
+        int length)
     {
         if (!d.nominal_value)
             return { { "kind", "OMITTED" } };
         if (const auto* s = d.nominal_value->access_string())
             return { { "kind", "STRING" }, { "value", s->value } };
+        const auto& exprs = d.nominal_value->access_exprs()->exprs;
+        if (operand && d.references_loctr)
+            return { { "kind", "ADDRESSES_PER_COPY" }, { "copies", copies(d, exprs, solver, *operand, length) } };
         auto values = nlohmann::json::array();
-        for (const auto& a : d.nominal_value->access_exprs()->exprs)
+        for (const auto& a : exprs)
             values.push_back(nominal_address(d, a, solver));
         return { { "kind", "ADDRESSES" }, { "values", values } };
+    }
+
+    nlohmann::json copies(const hp::expressions::data_definition& d,
+        const std::vector<hp::expressions::address_nominal>& exprs,
+        hp::context::dependency_solver& solver,
+        const hp::context::address& operand,
+        int length)
+    {
+        const auto dupl = d.evaluate_dupl_factor(solver, hp::drop_diagnostic_op);
+        const int count = dupl.present ? dupl.value : 1;
+        auto result = nlohmann::json::array();
+        for (int copy = 0; copy < count; ++copy)
+        {
+            auto values = nlohmann::json::array();
+            for (size_t k = 0; k < exprs.size(); ++k)
+            {
+                const auto at = operand + int((copy * exprs.size() + k) * length);
+                hp::processing::data_def_dependency_solver at_value(solver, &at);
+                values.push_back(nominal_address(d, exprs[k], at_value));
+            }
+            result.push_back(std::move(values));
+        }
+        return result;
     }
 
     nlohmann::json nominal_address(const hp::expressions::data_definition& d,
