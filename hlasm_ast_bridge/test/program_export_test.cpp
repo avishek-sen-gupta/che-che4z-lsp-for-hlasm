@@ -614,6 +614,21 @@ TEST(program_export, exports_channel_command_words_with_their_operands)
     EXPECT_EQ(statements[3], ccw(24, "", "CCW0", 3, absolute(0), 64, 1, 5, file));
 }
 
+TEST(program_export, resolves_an_s_type_literal_through_the_using_at_its_pool)
+{
+    const auto program = exported(run_bridge("s_literal",
+        "TEST     CSECT\n"
+        "         USING TEST,12\n"
+        "         L     1,=S(FLD)\n"
+        "         DROP  12\n"
+        "         USING TEST,11\n"
+        "         LTORG\n"
+        "FLD      DC    F'0'\n"
+        "         END\n"));
+
+    EXPECT_EQ(program.at("literals")[0].at("item").at("nominal"), addresses({ { "kind", "BASE_DISPLACEMENT" }, { "base", 11 }, { "displacement", 12 } }));
+}
+
 TEST(program_export, exports_a_literal_named_by_a_channel_command_word)
 {
     const auto r = run_bridge("ccw_literal",

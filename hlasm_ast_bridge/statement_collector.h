@@ -72,6 +72,13 @@ struct mode_setting
     std::string mode;
 };
 
+struct pool_point
+{
+    const hp::context::section* section;
+    int offset;
+    hp::index_t<hp::context::using_collection> active_using;
+};
+
 struct recorded_statement
 {
     std::string mnemonic;
@@ -127,6 +134,7 @@ public:
     std::optional<std::string> unrepresentable;
     std::vector<mode_setting> amodes;
     std::vector<mode_setting> rmodes;
+    std::vector<pool_point> pools;
 
     statement_collector(hp::context::hlasm_context& hlasm_ctx, const hp::library_info& lib_info)
         : hlasm_ctx(hlasm_ctx)
@@ -153,7 +161,12 @@ public:
         else if (op.type == ASM && (op.value == hp::context::id_index("DC") || op.value == hp::context::id_index("DS")))
             record_data(*res);
         else if (op.type == ASM && op.value == hp::context::id_index("END"))
+        {
+            record_pool();
             record_entry(*res);
+        }
+        else if (op.type == ASM && op.value == hp::context::id_index("LTORG"))
+            record_pool();
         else if (op.type == ASM
             && (op.value == hp::context::id_index("CCW") || op.value == hp::context::id_index("CCW0")
                 || op.value == hp::context::id_index("CCW1")))
@@ -286,6 +299,14 @@ private:
     {
         unrepresentable = "operands of " + std::string(res.opcode_ref().value.to_string_view()) + " at line "
             + std::to_string(origin_of().line) + " are not expressions";
+    }
+
+    void record_pool()
+    {
+        const auto here = hlasm_ctx.ord_ctx.align(hp::context::no_align);
+        if (here.bases().empty())
+            return;
+        pools.push_back({ here.bases().front().owner, here.offset(), hlasm_ctx.ord_ctx.current_using() });
     }
 
     void record_entry(const hp::processing::resolved_statement& res)

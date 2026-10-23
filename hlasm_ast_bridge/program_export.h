@@ -74,6 +74,7 @@ class program_exporter
     std::set<std::string> externals;
     std::vector<nlohmann::json> literals;
     std::vector<hp::context::id_index> literal_ids;
+    std::vector<pool_point> pools;
 
     class literal_finder final : public hp::expressions::mach_expr_visitor
     {
@@ -101,6 +102,7 @@ public:
     {
         if (collector.unrepresentable)
             throw std::runtime_error(*collector.unrepresentable);
+        pools = collector.pools;
         auto statements = nlohmann::json::array();
         for (const auto& s : collector.statements)
             statements.push_back(statement(s));
@@ -243,7 +245,7 @@ private:
             literal_finder finder;
             for (const auto& o : m->operands)
                 o->access_mach()->apply_mach_visitor(finder);
-            collect_literals(finder, s.origin, solver);
+            collect_literals(finder, s, solver);
             return row;
         }
         if (const auto* c = std::get_if<ccw_body>(&s.body))
@@ -256,7 +258,7 @@ private:
             literal_finder finder;
             for (const auto& o : c->operands)
                 o->apply(finder);
-            collect_literals(finder, s.origin, solver);
+            collect_literals(finder, s, solver);
             return row;
         }
         const auto& data = std::get<data_body>(s.body);
@@ -388,8 +390,18 @@ private:
         };
     }
 
+    hp::index_t<hp::context::using_collection> pool_using(
+        const hp::context::address& literal, hp::index_t<hp::context::using_collection> fallback) const
+    {
+        const pool_point* found = nullptr;
+        for (const auto& p : pools)
+            if (p.section == owner_of(literal) && p.offset <= literal.offset() && (!found || p.offset >= found->offset))
+                found = &p;
+        return found ? found->active_using : fallback;
+    }
+
     void collect_literals(
-        const literal_finder& finder, const statement_origin& at, hp::context::dependency_solver& solver)
+        const literal_finder& finder, const recorded_statement& s, hp::context::dependency_solver& solver)
     {
         for (const auto* lit : finder.found)
         {
@@ -398,11 +410,14 @@ private:
                 continue;
             literal_ids.push_back(id);
             const auto& address = ord_ctx.get_symbol(id)->value().get_reloc();
+            auto at_pool = s.dep_ctx;
+            at_pool.active_using = pool_using(address, s.dep_ctx.active_using);
+            hp::context::ordinary_assembly_dependency_solver pool_solver(ord_ctx, at_pool, lib_info);
             literals.push_back({
                 { "section", name_of(owner_of(address)->name) },
                 { "offset", address.offset() },
-                { "item", data_item(lit->get_data_definition(), true, solver, address.offset(), 0) },
-                { "origin", origin(at) },
+                { "item", data_item(lit->get_data_definition(), true, pool_solver, address.offset(), 0) },
+                { "origin", origin(s.origin) },
             });
         }
     }
