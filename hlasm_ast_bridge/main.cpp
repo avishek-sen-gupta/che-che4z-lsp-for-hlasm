@@ -12,7 +12,7 @@
  *   Broadcom, Inc. - initial API and implementation
  */
 
-// hlasm_ast_bridge CLI: `--instruction-table` writes the instruction table, `<src> [--source-name name] [--syslib dir]...` the program.
+// hlasm_ast_bridge CLI: `--instruction-table` writes the instruction table, `<src> [--source-name name] [--syslib dir]... [assembly inputs]` the program.
 
 #include <iostream>
 #include <string>

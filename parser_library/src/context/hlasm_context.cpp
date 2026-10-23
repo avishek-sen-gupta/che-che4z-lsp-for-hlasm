@@ -204,7 +204,12 @@ void hlasm_context::add_global_system_variables(system_variable_map& sysvars)
     sysvars.insert(
         create_system_variable(id_index("SYSOPT_XOBJECT"), std::to_string(asm_options_.sysopt_xobject), true));
 
-    sysvars.insert(create_system_variable(id_index("SYSPARM"), asm_options_.sysparm, true));
+    if (asm_options_.sysparm)
+        sysvars.insert(create_system_variable(id_index("SYSPARM"), *asm_options_.sysparm, true));
+    if (asm_options_.sysjob)
+        sysvars.insert(create_system_variable(id_index("SYSJOB"), *asm_options_.sysjob, true));
+    if (asm_options_.sysstep)
+        sysvars.insert(create_system_variable(id_index("SYSSTEP"), *asm_options_.sysstep, true));
 
     sysvars.insert(create_system_variable(
         id_index("SYSSTMT"), std::make_unique<sysstmt_macro_param_data>(metrics, scope_stack_), true));
@@ -335,9 +340,14 @@ void hlasm_context::add_scoped_system_variables(system_variable_map& sysvars, si
         create_system_variable<system_variable_sysmac>(id_index("SYSMAC"), std::make_unique<sysmac_data>(view), false));
 
 
-    sysvars.insert(create_system_variable(id_index("SYSIN_DSN"), asm_options_.sysin_dsn, false));
+    if (asm_options_.sysin_dsn)
+        sysvars.insert(create_system_variable(id_index("SYSIN_DSN"), *asm_options_.sysin_dsn, false));
 
-    sysvars.insert(create_system_variable(id_index("SYSIN_MEMBER"), asm_options_.sysin_member, false));
+    if (asm_options_.sysin_member)
+        sysvars.insert(create_system_variable(id_index("SYSIN_MEMBER"), *asm_options_.sysin_member, false));
+
+    sysvars.insert(create_system_variable(
+        id_index("SYSSEQF"), create_dynamic_var([view]() { return view.top().sequence_field; }), false));
 
     sysvars.insert(create_system_variable(
         id_index("SYSCLOCK"), create_dynamic_var([view]() { return view.top().time.to_string(); }), false));
@@ -353,7 +363,7 @@ hlasm_context::hlasm_context(
     , m_statements_remaining(asm_options_.statement_count_limit)
     , ord_ctx(*this)
 {
-    scope_stack_.emplace_back().time = utils::timestamp::now().value_or(utils::timestamp(1900, 1, 1));
+    scope_stack_.emplace_back().time = local_time();
 
     init_instruction_map(opcode_mnemo_, *ids_, asm_options_.instr_set);
 
@@ -865,6 +875,13 @@ context::macro_definition* hlasm_context::get_macro_definition(id_index name, co
     return nullptr;
 }
 
+utils::timestamp hlasm_context::local_time() const
+{
+    return asm_options_.clock ? asm_options_.clock->local : utils::timestamp::now().value_or(utils::timestamp(1900, 1, 1));
+}
+
+void hlasm_context::set_open_code_sequence_field(std::string field) { open_code_sequence_field_ = std::move(field); }
+
 bool hlasm_context::is_in_macro() const { return scope_stack_.back().is_in_macro(); }
 
 std::pair<const macro_invocation*, bool> hlasm_context::enter_macro(
@@ -885,7 +902,8 @@ std::pair<const macro_invocation*, bool> hlasm_context::enter_macro(
     auto* const result = invo.get();
 
     auto& new_scope = scope_stack_.emplace_back(std::move(invo));
-    new_scope.time = utils::timestamp::now().value_or(utils::timestamp(1900, 1, 1));
+    new_scope.time = asm_options_.clock ? asm_options_.clock->utc : utils::timestamp::now().value_or(utils::timestamp(1900, 1, 1));
+    new_scope.sequence_field = open_code_sequence_field_;
     new_scope.sysndx = SYSNDX_;
     if (auto sect = ord_ctx.current_section(); sect)
         new_scope.loctr = &sect->current_location_counter();

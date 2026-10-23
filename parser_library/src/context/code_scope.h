@@ -62,6 +62,8 @@ struct code_scope
     location_counter* loctr = nullptr;
     // scope creation time
     utils::timestamp time;
+    // columns 73-80 of the open-code statement that called the macro, directly or indirectly
+    std::string sequence_field;
     // variable for implementing &SYSM_SEV
     unsigned mnote_max_in_scope = 0;
     // MNOTE scope max

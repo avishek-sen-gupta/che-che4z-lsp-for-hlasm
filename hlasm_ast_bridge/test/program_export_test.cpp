@@ -687,3 +687,95 @@ TEST(program_export, refuses_a_duplicated_s_constant_whose_later_copy_leaves_the
     EXPECT_EQ(diagnostics[0].at("code"), "BRIDGE");
     EXPECT_EQ(diagnostics[0].at("message"), "S-type constant at line 4 is not addressable through a USING");
 }
+
+namespace {
+std::vector<std::string> string_nominals(const nlohmann::json& program)
+{
+    std::vector<std::string> values;
+    for (const auto& statement : program.at("statements"))
+        values.push_back(statement.at("items")[0].at("nominal").at("value").get<std::string>());
+    return values;
+}
+} // namespace
+
+TEST(program_export, defines_the_assembly_inputs_from_its_options_and_the_sequence_field_from_the_calling_line)
+{
+    const auto program = exported(run_bridge("inputs",
+        "         MACRO\n"
+        "         M\n"
+        "         LCLC  &B,&D\n"
+        "&B       AREAD CLOCKB\n"
+        "&D       AREAD CLOCKD\n"
+        "         DC    C'&SYSCLOCK'\n"
+        "         DC    C'&SYSIN_DSN'\n"
+        "         DC    C'&SYSIN_MEMBER'\n"
+        "         DC    C'&SYSSEQF'\n"
+        "         DC    C'&B &D'\n"
+        "         MEND\n"
+        "T        CSECT\n"
+        "         DC    C'&SYSPARM'\n"
+        "         DC    C'&SYSJOB'\n"
+        "         DC    C'&SYSSTEP'\n"
+        "         DC    C'&SYSDATE &SYSDATC &SYSTIME'\n"
+        "         M" + std::string(62, ' ') + "SEQ00010\n"
+        "         M\n"
+        "         END\n",
+        { "--sysparm", "P,1", "--sysjob", "JOB1", "--sysstep", "STEP1", "--sysin-dsn", "MY.DSN", "--sysin-member",
+            "MEMB", "--clock", "2026-01-02T00:30:15.123456+01:00" }));
+
+    const std::vector<std::string> in_macro {
+        "2026-01-01 23:30:15.123456",
+        "MY.DSN",
+        "MEMB",
+    };
+    std::vector<std::string> expected { "P,1", "JOB1", "STEP1", "01/02/26 20260102 00.30" };
+    for (const auto* seq : { "SEQ00010", "        " })
+    {
+        expected.insert(expected.end(), in_macro.begin(), in_macro.end());
+        expected.push_back(seq);
+        expected.push_back("00181512 00301512");
+    }
+    EXPECT_EQ(string_nominals(program), expected);
+}
+
+TEST(program_export, refuses_an_assembly_input_it_was_not_given)
+{
+    const auto r = run_bridge("unsupplied",
+        "         MACRO\n"
+        "         M\n"
+        "         DC    C'&SYSIN_DSN'\n"
+        "         DC    C'&SYSIN_MEMBER'\n"
+        "         MEND\n"
+        "T        CSECT\n"
+        "         DC    C'&SYSPARM'\n"
+        "         DC    C'&SYSJOB'\n"
+        "         DC    C'&SYSSTEP'\n"
+        "         M\n"
+        "         END\n");
+
+    EXPECT_EQ(r.exit_code, 2);
+    EXPECT_EQ(r.out, "");
+    const auto report = nlohmann::json::parse(r.err);
+    std::vector<std::pair<int, std::string>> refused;
+    for (const auto& d : report.at("diagnostics"))
+        refused.emplace_back(d.at("line").get<int>(), d.at("code").get<std::string>() + " " + d.at("message").get<std::string>());
+    std::ranges::sort(refused);
+    EXPECT_EQ(refused,
+        (std::vector<std::pair<int, std::string>> {
+            { 3, "E010 Unknown variable: SYSIN_DSN" },
+            { 4, "E010 Unknown variable: SYSIN_MEMBER" },
+            { 7, "E010 Unknown variable: SYSPARM" },
+            { 8, "E010 Unknown variable: SYSJOB" },
+            { 9, "E010 Unknown variable: SYSSTEP" },
+        }));
+}
+
+TEST(program_export, rejects_a_clock_without_its_offset_from_utc)
+{
+    std::ostringstream out;
+    std::ostringstream err;
+    const std::vector<std::string> args { "prog.asm", "--clock", "2026-01-02T00:30:15.123456" };
+
+    EXPECT_EQ(hlasm_ast_bridge::run(args, out, err), 1);
+    EXPECT_EQ(err.str(), "--clock takes YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM, not 2026-01-02T00:30:15.123456\n");
+}

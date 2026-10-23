@@ -234,6 +234,13 @@ void opencode_provider::feed_line(parsing::parser_holder& p, bool is_process, bo
 
     p.collector.prepare_for_next_statement();
 
+    auto sequence = m_current_logical_line.segments.front().begin;
+    const auto line_end = m_current_logical_line.segments.front().end;
+    utils::utf8_next(sequence, 72, line_end);
+    std::string sequence_field(sequence.base(), line_end.base());
+    utils::utf8_resize(sequence_field, 8, ' ');
+    m_ctx.hlasm_ctx->set_open_code_sequence_field(std::move(sequence_field));
+
     m_ctx.hlasm_ctx->metrics.lines += m_current_logical_line.segments.size();
 }
 

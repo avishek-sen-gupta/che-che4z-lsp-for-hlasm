@@ -19,9 +19,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <span>
@@ -585,6 +588,7 @@ inline int refuse(std::ostream& err, nlohmann::json diagnostics)
 inline int export_program(const std::string& source_path,
     const std::string& source_name,
     const std::vector<std::string>& syslib,
+    hp::asm_option inputs,
     std::ostream& out,
     std::ostream& err)
 {
@@ -606,6 +610,7 @@ inline int export_program(const std::string& source_path,
             hlasm_plugin::utils::resource::resource_location(source_uri),
             &provider,
             hp::file_is_opencode::yes,
+            std::move(inputs),
         });
     statement_collector collector(a.hlasm_ctx(), lib_info);
     a.register_stmt_analyzer(&collector);
@@ -628,6 +633,37 @@ inline int export_program(const std::string& source_path,
     }
 }
 
+inline std::optional<hp::assembly_clock> parse_clock(const std::string& text)
+{
+    using namespace std::chrono;
+    int y, mo, d, h, mi, sec, micro, oh, om;
+    char sign;
+    char rest;
+    if (text.size() != 32
+        || std::sscanf(text.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d.%6d%c%2d:%2d%c", &y, &mo, &d, &h, &mi, &sec, &micro, &sign, &oh, &om, &rest)
+            != 10
+        || (sign != '+' && sign != '-'))
+        return std::nullopt;
+    const year_month_day date { year(y), month(unsigned(mo)), day(unsigned(d)) };
+    if (!date.ok())
+        return std::nullopt;
+    const auto offset = (sign == '+' ? 1 : -1) * (hours(oh) + minutes(om));
+    const auto utc = sys_days(date) + hours(h) + minutes(mi) + seconds(sec) - offset;
+    const auto utc_day = floor<days>(utc);
+    const year_month_day utc_date(utc_day);
+    const hh_mm_ss utc_time(utc - utc_day);
+    return hp::assembly_clock {
+        .local = hlasm_plugin::utils::timestamp(y, mo, d, h, mi, sec, micro),
+        .utc = hlasm_plugin::utils::timestamp(int(utc_date.year()),
+            unsigned(utc_date.month()),
+            unsigned(utc_date.day()),
+            unsigned(utc_time.hours().count()),
+            unsigned(utc_time.minutes().count()),
+            unsigned(utc_time.seconds().count()),
+            micro),
+    };
+}
+
 inline int run(std::span<const std::string> args, std::ostream& out, std::ostream& err)
 {
     if (args.size() == 1 && args.front() == "--instruction-table")
@@ -638,10 +674,31 @@ inline int run(std::span<const std::string> args, std::ostream& out, std::ostrea
     std::vector<std::string> sources;
     std::vector<std::string> syslib;
     std::string source_name;
+    hp::asm_option inputs { .sysparm = std::nullopt, .sysin_dsn = std::nullopt, .sysin_member = std::nullopt };
     for (size_t i = 0; i < args.size(); ++i)
     {
         if (args[i] == "--syslib" && i + 1 < args.size())
             syslib.push_back(args[++i]);
+        else if (args[i] == "--sysparm" && i + 1 < args.size())
+            inputs.sysparm = args[++i];
+        else if (args[i] == "--sysjob" && i + 1 < args.size())
+            inputs.sysjob = args[++i];
+        else if (args[i] == "--sysstep" && i + 1 < args.size())
+            inputs.sysstep = args[++i];
+        else if (args[i] == "--sysin-dsn" && i + 1 < args.size())
+            inputs.sysin_dsn = args[++i];
+        else if (args[i] == "--sysin-member" && i + 1 < args.size())
+            inputs.sysin_member = args[++i];
+        else if (args[i] == "--clock" && i + 1 < args.size())
+        {
+            const auto& text = args[++i];
+            inputs.clock = parse_clock(text);
+            if (!inputs.clock)
+            {
+                err << "--clock takes YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM, not " << text << '\n';
+                return 1;
+            }
+        }
         else if (args[i] == "--source-name" && i + 1 < args.size())
             source_name = args[++i];
         else
@@ -649,10 +706,11 @@ inline int run(std::span<const std::string> args, std::ostream& out, std::ostrea
     }
     if (sources.size() != 1 || sources.front().starts_with("--"))
     {
-        err << "usage: hlasm_ast_bridge --instruction-table | hlasm_ast_bridge <src> [--source-name name] [--syslib dir]...\n";
+        err << "usage: hlasm_ast_bridge --instruction-table | hlasm_ast_bridge <src> [--source-name name] [--syslib dir]... "
+               "[--sysparm v] [--sysjob v] [--sysstep v] [--sysin-dsn v] [--sysin-member v] [--clock iso-instant]\n";
         return 1;
     }
-    return export_program(sources.front(), source_name, syslib, out, err);
+    return export_program(sources.front(), source_name, syslib, std::move(inputs), out, err);
 }
 
 } // namespace hlasm_ast_bridge

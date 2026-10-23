@@ -102,6 +102,7 @@ private:
 
     // stack of nested scopes
     std::deque<code_scope> scope_stack_;
+    std::string open_code_sequence_field_;
     code_scope* curr_scope();
     const code_scope* curr_scope() const;
     // stack of processed source files
@@ -165,6 +166,11 @@ public:
         asm_option asm_opts = {},
         std::shared_ptr<id_storage> init_ids = make_default_id_storage());
     ~hlasm_context();
+
+    // the assembly's local time: the supplied clock, or the wall clock
+    utils::timestamp local_time() const;
+    // records columns 73-80 of the open-code statement about to be processed
+    void set_open_code_sequence_field(std::string field);
 
     // gets opencode file location
     const utils::resource::resource_location& opencode_location() const;

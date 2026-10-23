@@ -553,10 +553,10 @@ void ca_processor::process_AREAD(const processing::resolved_statement& stmt)
     if (!set_symbol)
         return;
 
-    constexpr auto since_midnight = []() -> std::chrono::nanoseconds {
+    const auto since_midnight = [this]() -> std::chrono::nanoseconds {
         using namespace std::chrono;
 
-        const auto now = utils::timestamp::now().value_or(utils::timestamp());
+        const auto now = hlasm_ctx.local_time();
 
         return hours(now.hour()) + minutes(now.minute()) + seconds(now.second()) + microseconds(now.microsecond());
     };
