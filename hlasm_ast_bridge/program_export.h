@@ -32,15 +32,18 @@
 #include <nlohmann/json.hpp>
 
 #include "analyzer.h"
+#include "checking/data_definition/data_def_type_base.h"
 #include "checking/diagnostic_collector.h"
 #include "checking/machine_check.h"
 #include "context/ordinary_assembly/location_counter.h"
 #include "context/ordinary_assembly/section.h"
+#include "context/using.h"
 #include "ebcdic_encoding.h"
 #include "expressions/mach_expr_visitor.h"
 #include "expressions/mach_operator.h"
 #include "fs_parse_lib_provider.h"
 #include "instruction_table_export.h"
+#include "processing/instruction_sets/data_def_postponed_statement.h"
 #include "library_info_transitional.h"
 #include "statement_collector.h"
 #include "utils/path_conversions.h"
@@ -108,6 +111,8 @@ public:
             { "externals", externals },
             { "statements", statements },
             { "literals", literals },
+            { "amodes", modes(collector.amodes) },
+            { "rmodes", modes(collector.rmodes) },
             { "diagnostics", std::move(diagnostics) },
         };
     }
@@ -120,6 +125,14 @@ private:
         if (collector.entry)
             return { { "kind", "NAMED" }, { "name", *collector.entry } };
         return { { "kind", "DEFAULT" } };
+    }
+
+    static nlohmann::json modes(const std::vector<mode_setting>& settings)
+    {
+        auto result = nlohmann::json::array();
+        for (const auto& m : settings)
+            result.push_back({ { "name", m.name }, { "mode", m.mode } });
+        return result;
     }
 
     static std::string name_of(hp::context::id_index id) { return std::string(id.to_string_view()); }
@@ -225,12 +238,51 @@ private:
             collect_literals(*m, solver);
             return row;
         }
+        if (const auto* c = std::get_if<ccw_body>(&s.body))
+        {
+            row["kind"] = "CCW";
+            row["command_code"] = absolute_operand(*c->operands[0], solver);
+            row["address"] = address_value(*c->operands[1], solver);
+            row["flags"] = absolute_operand(*c->operands[2], solver);
+            row["count"] = absolute_operand(*c->operands[3], solver);
+            return row;
+        }
         const auto& data = std::get<data_body>(s.body);
         row["kind"] = data.initialised ? "DC" : "DS";
-        row["items"] = nlohmann::json::array();
-        for (const auto& d : data.definitions)
-            row["items"].push_back(data_item(*d, data.initialised, solver));
+        row["items"] = data_items(data, s.address, solver);
         return row;
+    }
+
+    static int absolute_operand(const hp::expressions::mach_expression& e, hp::context::dependency_solver& solver)
+    {
+        const auto v = e.evaluate(solver, hp::drop_diagnostic_op);
+        if (v.value_kind() != hp::context::symbol_value_kind::ABS)
+            throw std::runtime_error("operand at " + std::to_string(e.get_range().start.line + 1) + " is not absolute");
+        return v.get_abs();
+    }
+
+    static int modifier(const hp::expressions::mach_expr_ptr& e, hp::context::dependency_solver& solver)
+    { return e ? absolute_operand(*e, solver) : 0; }
+
+    nlohmann::json data_items(
+        const data_body& data, const hp::context::address& start, hp::context::dependency_solver& solver)
+    {
+        using enum hp::expressions::data_definition::length_type;
+        const auto instr = data.initialised ? hp::checking::data_instr_type::DC : hp::checking::data_instr_type::DS;
+        const uint64_t start_bit = uint64_t(start.offset()) * 8;
+        auto bit = start_bit;
+        auto items = nlohmann::json::array();
+        for (const auto& d : data.definitions)
+        {
+            if (d->length_type != BIT)
+                bit = hp::checking::round_up(
+                    hp::checking::round_up(bit, uint64_t { 8 }), uint64_t(d->get_alignment().boundary) * 8);
+            const auto at = start + int((bit - start_bit) / 8);
+            hp::processing::data_def_dependency_solver at_operand(solver, &at);
+            items.push_back(data_item(*d, data.initialised, at_operand, at.offset(), bit % 8));
+            bit += d->evaluate_total_length(at_operand, instr, hp::drop_diagnostic_op);
+        }
+        return items;
     }
 
     nlohmann::json origin(const statement_origin& o) const
@@ -339,21 +391,32 @@ private:
             literals.push_back({
                 { "section", name_of(owner_of(address)->name) },
                 { "offset", address.offset() },
-                { "item", data_item(lit->get_data_definition(), true, solver) },
+                { "item", data_item(lit->get_data_definition(), true, solver, address.offset(), 0) },
             });
         }
     }
 
-    nlohmann::json data_item(
-        const hp::expressions::data_definition& d, bool with_nominal, hp::context::dependency_solver& solver)
+    nlohmann::json data_item(const hp::expressions::data_definition& d,
+        bool with_nominal,
+        hp::context::dependency_solver& solver,
+        int offset,
+        uint64_t bit_offset)
     {
         const auto dupl = d.evaluate_dupl_factor(solver, hp::drop_diagnostic_op);
+        const bool in_bits = d.length_type == hp::expressions::data_definition::length_type::BIT;
+        const int length =
+            in_bits ? modifier(d.length, solver) : int(d.get_length_attribute(solver, hp::drop_diagnostic_op));
         nlohmann::json item = {
             { "type", std::string(1, d.type) },
             { "extension", d.extension ? std::string(1, d.extension) : std::string() },
             { "duplication", dupl.present ? dupl.value : 1 },
-            { "length", d.get_length_attribute(solver, hp::drop_diagnostic_op) },
+            { "length", length },
+            { "length_unit", in_bits ? "BIT" : "BYTE" },
             { "explicit_length", d.length != nullptr },
+            { "scale", modifier(d.scale, solver) },
+            { "exponent", modifier(d.exponent, solver) },
+            { "offset", offset },
+            { "bit_offset", bit_offset },
         };
         if (with_nominal)
             item["nominal"] = nominal(d, solver);
@@ -362,20 +425,51 @@ private:
 
     nlohmann::json nominal(const hp::expressions::data_definition& d, hp::context::dependency_solver& solver)
     {
+        if (!d.nominal_value)
+            return { { "kind", "OMITTED" } };
         if (const auto* s = d.nominal_value->access_string())
             return { { "kind", "STRING" }, { "value", s->value } };
         auto values = nlohmann::json::array();
         for (const auto& a : d.nominal_value->access_exprs()->exprs)
-            values.push_back(address_value(d.type, *a.displacement, solver));
+            values.push_back(nominal_address(d, a, solver));
         return { { "kind", "ADDRESSES" }, { "values", values } };
     }
 
-    nlohmann::json address_value(
-        char type, const hp::expressions::mach_expression& e, hp::context::dependency_solver& solver)
+    nlohmann::json nominal_address(const hp::expressions::data_definition& d,
+        const hp::expressions::address_nominal& a,
+        hp::context::dependency_solver& solver)
     {
-        const auto* symbol = dynamic_cast<const hp::expressions::mach_expr_symbol*>(&e);
-        if (type == 'V' && symbol)
+        const auto* symbol = dynamic_cast<const hp::expressions::mach_expr_symbol*>(a.displacement.get());
+        if (d.type == 'V' && symbol)
             return external(name_of(symbol->value));
+        if (d.type == 'S')
+            return base_displacement(d, a, solver);
+        return address_value(*a.displacement, solver);
+    }
+
+    static nlohmann::json based(int base, int displacement)
+    { return { { "kind", "BASE_DISPLACEMENT" }, { "base", base }, { "displacement", displacement } }; }
+
+    static nlohmann::json base_displacement(const hp::expressions::data_definition& d,
+        const hp::expressions::address_nominal& a,
+        hp::context::dependency_solver& solver)
+    {
+        if (a.base)
+            return based(absolute_operand(*a.base, solver), absolute_operand(*a.displacement, solver));
+        const auto v = a.displacement->evaluate(solver, hp::drop_diagnostic_op);
+        if (v.value_kind() == hp::context::symbol_value_kind::ABS)
+            return based(0, v.get_abs());
+        const auto& reloc = v.get_reloc();
+        const auto& base = reloc.bases().front();
+        const auto resolved = solver.using_evaluate(base.qualifier, base.owner, reloc.offset(), d.extension == 'Y');
+        if (resolved.reg == hp::context::using_collection::invalid_register)
+            throw std::runtime_error("S-type constant at " + std::to_string(a.total.start.line + 1)
+                + " is not addressable through a USING");
+        return based(resolved.reg, resolved.reg_offset);
+    }
+
+    nlohmann::json address_value(const hp::expressions::mach_expression& e, hp::context::dependency_solver& solver)
+    {
         const auto v = e.evaluate(solver, hp::drop_diagnostic_op);
         if (v.value_kind() == hp::context::symbol_value_kind::ABS)
             return { { "kind", "ABS" }, { "value", v.get_abs() } };
@@ -412,8 +506,12 @@ inline std::string_view severity_name(hp::diagnostic_severity s)
     }
 }
 
-inline nlohmann::json diagnostic_json(
-    std::string_view code, std::string_view severity, std::string_view message, std::string_view file, size_t line)
+inline nlohmann::json diagnostic_json(std::string_view code,
+    std::string_view severity,
+    std::string_view message,
+    std::string_view file,
+    size_t line,
+    nlohmann::json related)
 {
     return {
         { "code", code },
@@ -421,15 +519,28 @@ inline nlohmann::json diagnostic_json(
         { "message", message },
         { "file", file },
         { "line", line },
+        { "related", std::move(related) },
     };
+}
+
+inline nlohmann::json related_json(const hp::diagnostic& d, const source_naming& naming)
+{
+    auto result = nlohmann::json::array();
+    for (const auto& r : d.related)
+        result.push_back({ { "file", naming.file_of(r.location.uri) }, { "line", r.location.rang.start.line + 1 } });
+    return result;
 }
 
 inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags, const source_naming& naming)
 {
     auto result = nlohmann::json::array();
     for (const auto& d : diags)
-        result.push_back(
-            diagnostic_json(d.code, severity_name(d.severity), d.message, naming.file_of(d.file_uri), d.diag_range.start.line + 1));
+        result.push_back(diagnostic_json(d.code,
+            severity_name(d.severity),
+            d.message,
+            naming.file_of(d.file_uri),
+            d.diag_range.start.line + 1,
+            related_json(d, naming)));
     return result;
 }
 
@@ -481,7 +592,7 @@ inline int export_program(const std::string& source_path,
     }
     catch (const std::runtime_error& e)
     {
-        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), naming.file_of(source_uri), 0) }));
+        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), naming.file_of(source_uri), 0, nlohmann::json::array()) }));
     }
 }
 

@@ -61,6 +61,17 @@ struct data_body
     std::vector<std::unique_ptr<hp::expressions::data_definition>> definitions;
 };
 
+struct ccw_body
+{
+    std::vector<hp::expressions::mach_expr_ptr> operands;
+};
+
+struct mode_setting
+{
+    std::string name;
+    std::string mode;
+};
+
 struct recorded_statement
 {
     std::string mnemonic;
@@ -68,7 +79,7 @@ struct recorded_statement
     hp::context::address address;
     hp::context::dependency_evaluation_context dep_ctx;
     statement_origin origin;
-    std::variant<machine_body, data_body> body;
+    std::variant<machine_body, data_body, ccw_body> body;
 };
 
 inline hp::expressions::mach_expr_ptr clone_expr(const hp::expressions::mach_expr_ptr& e)
@@ -113,6 +124,8 @@ public:
     std::vector<recorded_statement> statements;
     std::optional<std::string> entry;
     bool entry_unrepresentable = false;
+    std::vector<mode_setting> amodes;
+    std::vector<mode_setting> rmodes;
 
     statement_collector(hp::context::hlasm_context& hlasm_ctx, const hp::library_info& lib_info)
         : hlasm_ctx(hlasm_ctx)
@@ -140,6 +153,14 @@ public:
             record_data(*res);
         else if (op.type == ASM && op.value == hp::context::id_index("END"))
             record_entry(*res);
+        else if (op.type == ASM
+            && (op.value == hp::context::id_index("CCW") || op.value == hp::context::id_index("CCW0")
+                || op.value == hp::context::id_index("CCW1")))
+            record_ccw(*res);
+        else if (op.type == ASM && op.value == hp::context::id_index("AMODE"))
+            record_mode(*res, amodes);
+        else if (op.type == ASM && op.value == hp::context::id_index("RMODE"))
+            record_mode(*res, rmodes);
         return false;
     }
 
@@ -183,7 +204,7 @@ private:
     void record(const hp::processing::resolved_statement& res,
         hp::context::alignment alignment,
         size_t unique_id_offset,
-        std::variant<machine_body, data_body> body)
+        std::variant<machine_body, data_body, ccw_body> body)
     {
         auto address = hlasm_ctx.ord_ctx.align(alignment);
         auto dep_ctx = hp::context::ordinary_assembly_dependency_solver(hlasm_ctx.ord_ctx, address, lib_info)
@@ -230,6 +251,33 @@ private:
         const auto alignment = definitions.front()->get_alignment();
         const bool initialised = res.opcode_ref().value == hp::context::id_index("DC");
         record(res, alignment, 1, data_body { initialised, std::move(definitions) });
+    }
+
+    static const hp::semantics::expr_assembler_operand* expr_operand(const hp::semantics::operand& o)
+    {
+        const auto* asm_op = o.access_asm();
+        return asm_op ? asm_op->access_expr() : nullptr;
+    }
+
+    void record_ccw(const hp::processing::resolved_statement& res)
+    {
+        std::vector<hp::expressions::mach_expr_ptr> operands;
+        for (const auto& o : res.operands_ref().value)
+        {
+            const auto* expr = expr_operand(*o);
+            if (!expr)
+                return;
+            operands.push_back(clone_expr(expr->expression));
+        }
+        record(res, hp::context::doubleword, 1, ccw_body { std::move(operands) });
+    }
+
+    static void record_mode(const hp::processing::resolved_statement& res, std::vector<mode_setting>& modes)
+    {
+        const auto& ops = res.operands_ref().value;
+        const auto* expr = ops.size() == 1 ? expr_operand(*ops.front()) : nullptr;
+        if (expr)
+            modes.push_back({ label_of(res), expr->get_value() });
     }
 
     void record_entry(const hp::processing::resolved_statement& res)

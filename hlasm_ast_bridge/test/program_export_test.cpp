@@ -116,20 +116,25 @@ nlohmann::json machine(const std::string& section,
     };
 }
 
-nlohmann::json ds_item(const std::string& type, int duplication, int length)
+nlohmann::json ds_item(const std::string& type, int duplication, int length, int offset)
 {
     return {
         { "type", type },
         { "extension", "" },
         { "duplication", duplication },
         { "length", length },
+        { "length_unit", "BYTE" },
         { "explicit_length", false },
+        { "scale", 0 },
+        { "exponent", 0 },
+        { "offset", offset },
+        { "bit_offset", 0 },
     };
 }
 
-nlohmann::json dc_item(const std::string& type, int length, bool explicit_length, nlohmann::json nominal)
+nlohmann::json dc_item(const std::string& type, int length, bool explicit_length, nlohmann::json nominal, int offset)
 {
-    auto item = ds_item(type, 1, length);
+    auto item = ds_item(type, 1, length, offset);
     item["explicit_length"] = explicit_length;
     item["nominal"] = std::move(nominal);
     return item;
@@ -179,7 +184,7 @@ TEST(program_export, exports_resolved_machine_statement)
         { "offset", 8 },
         { "label", "FIELD" },
         { "mnemonic", "DC" },
-        { "items", { dc_item("F", 4, false, string_nominal("7")) } },
+        { "items", { dc_item("F", 4, false, string_nominal("7"), 8) } },
         { "origin", open_code(r.source_uri, 5) },
     };
     const nlohmann::json expected = {
@@ -195,6 +200,8 @@ TEST(program_export, exports_resolved_machine_statement)
                 field_dc,
             } },
         { "literals", nlohmann::json::array() },
+        { "amodes", nlohmann::json::array() },
+        { "rmodes", nlohmann::json::array() },
         { "diagnostics", nlohmann::json::array() },
     };
     EXPECT_EQ(exported(r), expected);
@@ -221,12 +228,12 @@ TEST(program_export, exports_dc_nominals)
         { "mnemonic", "DC" },
         { "items",
             {
-                dc_item("C", 2, false, string_nominal("AB")),
-                dc_item("X", 1, false, string_nominal("C1")),
-                dc_item("F", 4, false, string_nominal("-1")),
-                dc_item("P", 3, true, string_nominal("12")),
-                dc_item("A", 4, false, addresses(reloc("HELLO", 8))),
-                dc_item("V", 4, false, addresses({ { "kind", "EXTERNAL" }, { "name", "EXT" } })),
+                dc_item("C", 2, false, string_nominal("AB"), 12),
+                dc_item("X", 1, false, string_nominal("C1"), 14),
+                dc_item("F", 4, false, string_nominal("-1"), 16),
+                dc_item("P", 3, true, string_nominal("12"), 20),
+                dc_item("A", 4, false, addresses(reloc("HELLO", 8)), 24),
+                dc_item("V", 4, false, addresses({ { "kind", "EXTERNAL" }, { "name", "EXT" } }), 28),
             } },
         { "origin", open_code(r.source_uri, 6) },
     };
@@ -236,7 +243,7 @@ TEST(program_export, exports_dc_nominals)
         { "offset", 32 },
         { "label", "" },
         { "mnemonic", "DS" },
-        { "items", { ds_item("H", 2, 2) } },
+        { "items", { ds_item("H", 2, 2, 32) } },
         { "origin", open_code(r.source_uri, 7) },
     };
     const auto& statements = program.at("statements");
@@ -300,8 +307,8 @@ TEST(program_export, exports_literal_pool)
     const auto program = exported(r);
 
     const nlohmann::json expected_literals = {
-        { { "section", "HELLO" }, { "offset", 16 }, { "item", dc_item("F", 4, false, string_nominal("5")) } },
-        { { "section", "HELLO" }, { "offset", 20 }, { "item", dc_item("A", 4, false, addresses(reloc("HELLO", 4))) } },
+        { { "section", "HELLO" }, { "offset", 16 }, { "item", dc_item("F", 4, false, string_nominal("5"), 16) } },
+        { { "section", "HELLO" }, { "offset", 20 }, { "item", dc_item("A", 4, false, addresses(reloc("HELLO", 4)), 20) } },
     };
     EXPECT_EQ(program.at("literals"), expected_literals);
     const nlohmann::json expected_statements = {
@@ -492,4 +499,146 @@ TEST(program_export, exports_vzero_as_vgbm_of_its_register_with_a_zero_mask)
         { "VONE", "VGBM", { vector20, ones } },
     };
     EXPECT_EQ(resolved, expected);
+}
+
+TEST(program_export, exports_each_dc_operand_at_its_own_offset_with_its_modifiers)
+{
+    const auto program = exported(run_bridge("operand_offsets",
+        "T        CSECT\n"
+        "         DC    C'X'\n"
+        "         DC    H'1',F'2',BL.4'1010',BL.4'0101',C'A',FS2'1.25',FE1'100'\n"
+        "         DS    0F\n"
+        "         DC    0F\n"
+        "         END\n"));
+    const auto& statements = program.at("statements");
+
+    ASSERT_EQ(statements.size(), 4u);
+    std::vector<nlohmann::json> placed;
+    for (const auto& item : statements[1].at("items"))
+        placed.push_back({ item["type"], item["offset"], item["bit_offset"], item["length"], item["length_unit"],
+            item["scale"], item["exponent"] });
+    const std::vector<nlohmann::json> expected = {
+        { "H", 2, 0, 2, "BYTE", 0, 0 },
+        { "F", 4, 0, 4, "BYTE", 0, 0 },
+        { "B", 8, 0, 4, "BIT", 0, 0 },
+        { "B", 8, 4, 4, "BIT", 0, 0 },
+        { "C", 9, 0, 1, "BYTE", 0, 0 },
+        { "F", 12, 0, 4, "BYTE", 2, 0 },
+        { "F", 16, 0, 4, "BYTE", 0, 1 },
+    };
+    EXPECT_EQ(placed, expected);
+    auto zero_fullwords = ds_item("F", 0, 4, 20);
+    EXPECT_EQ(statements[2].at("items"), (nlohmann::json { zero_fullwords }));
+    zero_fullwords["nominal"] = { { "kind", "OMITTED" } };
+    EXPECT_EQ(statements[3].at("items"), (nlohmann::json { zero_fullwords }));
+}
+
+TEST(program_export, evaluates_the_location_counter_at_each_dc_operand)
+{
+    const auto program = exported(run_bridge("operand_loctr",
+        "T        CSECT\n"
+        "         DC    A(0),A(*)\n"
+        "         DC    C'A',A(*),Y(*-T)\n"
+        "         END\n"));
+    const auto& statements = program.at("statements");
+
+    ASSERT_EQ(statements.size(), 2u);
+    EXPECT_EQ(statements[0].at("items")[1].at("nominal"), addresses(reloc("T", 4)));
+    EXPECT_EQ(statements[1].at("items")[1].at("nominal"), addresses(reloc("T", 12)));
+    EXPECT_EQ(statements[1].at("items")[2].at("nominal"), addresses(absolute(16)));
+}
+
+TEST(program_export, resolves_s_constants_through_the_active_using)
+{
+    const auto program = exported(run_bridge("s_constants",
+        "T        CSECT\n"
+        "         USING T,12\n"
+        "         DC    S(FIELD),S(8(5)),S(100)\n"
+        "         DC    SY(FIELD)\n"
+        "FIELD    DC    F'0'\n"
+        "         END\n"));
+    const auto& statements = program.at("statements");
+
+    const auto based = [](int base, int displacement) {
+        return nlohmann::json { { "kind", "BASE_DISPLACEMENT" }, { "base", base }, { "displacement", displacement } };
+    };
+    ASSERT_EQ(statements.size(), 3u);
+    std::vector<nlohmann::json> values;
+    for (const auto& item : statements[0].at("items"))
+        values.push_back(item.at("nominal").at("values")[0]);
+    EXPECT_EQ(values, (std::vector<nlohmann::json> { based(12, 12), based(5, 8), based(0, 100) }));
+    EXPECT_EQ(statements[1].at("items")[0].at("nominal"), addresses(based(12, 12)));
+}
+
+TEST(program_export, exports_channel_command_words_with_their_operands)
+{
+    const auto program = exported(run_bridge("ccw",
+        "T        CSECT\n"
+        "         DC    C'X'\n"
+        "READ     CCW   X'02',BUF,X'20',80\n"
+        "         CCW1  2,BUF,0,4\n"
+        "         CCW0  X'03',0,X'40',1\n"
+        "BUF      DS    CL80\n"
+        "         END\n"));
+    const auto& statements = program.at("statements");
+
+    ASSERT_EQ(statements.size(), 5u);
+    const auto ccw = [](int offset, const std::string& label, const std::string& mnemonic, int code,
+                         nlohmann::json address, int flags, int count, int line, const std::string& file) {
+        return nlohmann::json {
+            { "kind", "CCW" },
+            { "section", "T" },
+            { "offset", offset },
+            { "label", label },
+            { "mnemonic", mnemonic },
+            { "command_code", code },
+            { "address", std::move(address) },
+            { "flags", flags },
+            { "count", count },
+            { "origin", open_code(file, line) },
+        };
+    };
+    const auto file = statements[0].at("origin").at("file").get<std::string>();
+    EXPECT_EQ(statements[1], ccw(8, "READ", "CCW", 2, reloc("T", 32), 32, 80, 3, file));
+    EXPECT_EQ(statements[2], ccw(16, "", "CCW1", 2, reloc("T", 32), 0, 4, 4, file));
+    EXPECT_EQ(statements[3], ccw(24, "", "CCW0", 3, absolute(0), 64, 1, 5, file));
+}
+
+TEST(program_export, exports_amode_and_rmode_as_written)
+{
+    const auto program = exported(run_bridge("modes",
+        "T        CSECT\n"
+        "T        AMODE 31\n"
+        "T        RMODE ANY\n"
+        "U        CSECT\n"
+        "U        AMODE ANY64\n"
+        "         END\n"));
+
+    EXPECT_EQ(program.at("amodes"),
+        (nlohmann::json { { { "name", "T" }, { "mode", "31" } }, { { "name", "U" }, { "mode", "ANY64" } } }));
+    EXPECT_EQ(program.at("rmodes"), (nlohmann::json { { { "name", "T" }, { "mode", "ANY" } } }));
+}
+
+TEST(program_export, exports_the_macro_call_stack_of_each_diagnostic)
+{
+    const auto r = run_bridge("related",
+        "         MACRO\n"
+        "         INNER\n"
+        "         MNOTE 4,'CAREFUL'\n"
+        "         MEND\n"
+        "         MACRO\n"
+        "         OUTER\n"
+        "         INNER\n"
+        "         MEND\n"
+        "         OUTER\n"
+        "         END\n");
+    const auto diagnostics = exported(r).at("diagnostics");
+
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_EQ(diagnostics[0].at("line"), 3);
+    EXPECT_EQ(diagnostics[0].at("related"),
+        (nlohmann::json {
+            { { "file", r.source_uri }, { "line", 7 } },
+            { { "file", r.source_uri }, { "line", 9 } },
+        }));
 }
