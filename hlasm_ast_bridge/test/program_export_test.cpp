@@ -738,7 +738,7 @@ TEST(program_export, defines_the_assembly_inputs_from_its_options_and_the_sequen
     EXPECT_EQ(string_nominals(program), expected);
 }
 
-TEST(program_export, refuses_an_assembly_input_it_was_not_given)
+TEST(program_export, refuses_a_name_it_was_not_given)
 {
     const auto r = run_bridge("unsupplied",
         "         MACRO\n"
@@ -747,7 +747,7 @@ TEST(program_export, refuses_an_assembly_input_it_was_not_given)
         "         DC    C'&SYSIN_MEMBER'\n"
         "         MEND\n"
         "T        CSECT\n"
-        "         DC    C'&SYSPARM'\n"
+        "         DC    C'P=&SYSPARM'\n"
         "         DC    C'&SYSJOB'\n"
         "         DC    C'&SYSSTEP'\n"
         "         M\n"
@@ -764,7 +764,6 @@ TEST(program_export, refuses_an_assembly_input_it_was_not_given)
         (std::vector<std::pair<int, std::string>> {
             { 3, "E010 Unknown variable: SYSIN_DSN" },
             { 4, "E010 Unknown variable: SYSIN_MEMBER" },
-            { 7, "E010 Unknown variable: SYSPARM" },
             { 8, "E010 Unknown variable: SYSJOB" },
             { 9, "E010 Unknown variable: SYSSTEP" },
         }));
@@ -778,4 +777,26 @@ TEST(program_export, rejects_a_clock_without_its_offset_from_utc)
 
     EXPECT_EQ(hlasm_ast_bridge::run(args, out, err), 1);
     EXPECT_EQ(err.str(), "--clock takes YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM, not 2026-01-02T00:30:15.123456\n");
+}
+
+TEST(program_export, rejects_a_clock_field_out_of_range)
+{
+    for (const auto* clock : { "2026-01-02T25:30:15.123456+01:00", "2026-01-02T00:60:15.123456+01:00",
+             "2026-01-02T00:30:60.123456+01:00", "2026-01-02T00:30:15.123456+24:00", "2026-01-02T00:30:15.123456+01:60" })
+    {
+        const auto r = run_bridge("clock_range", "         END\n", { "--clock", clock });
+
+        EXPECT_EQ(r.exit_code, 1) << clock;
+        EXPECT_EQ(r.err, std::string("--clock takes YYYY-MM-DDTHH:MM:SS.ffffff+HH:MM, not ") + clock + "\n");
+    }
+}
+
+TEST(program_export, reads_an_unsupplied_sysparm_as_the_null_string)
+{
+    const auto program = exported(run_bridge("null_sysparm",
+        "T        CSECT\n"
+        "         DC    C'P=&SYSPARM'\n"
+        "         END\n"));
+
+    EXPECT_EQ(string_nominals(program), std::vector<std::string> { "P=" });
 }

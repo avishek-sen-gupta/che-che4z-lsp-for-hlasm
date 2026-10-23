@@ -642,7 +642,7 @@ inline std::optional<hp::assembly_clock> parse_clock(const std::string& text)
     if (text.size() != 32
         || std::sscanf(text.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d.%6d%c%2d:%2d%c", &y, &mo, &d, &h, &mi, &sec, &micro, &sign, &oh, &om, &rest)
             != 10
-        || (sign != '+' && sign != '-'))
+        || (sign != '+' && sign != '-') || h > 23 || mi > 59 || sec > 59 || oh > 23 || om > 59)
         return std::nullopt;
     const year_month_day date { year(y), month(unsigned(mo)), day(unsigned(d)) };
     if (!date.ok())
@@ -674,7 +674,7 @@ inline int run(std::span<const std::string> args, std::ostream& out, std::ostrea
     std::vector<std::string> sources;
     std::vector<std::string> syslib;
     std::string source_name;
-    hp::asm_option inputs { .sysparm = std::nullopt, .sysin_dsn = std::nullopt, .sysin_member = std::nullopt };
+    hp::asm_option inputs { .sysin_dsn = std::nullopt, .sysin_member = std::nullopt };
     for (size_t i = 0; i < args.size(); ++i)
     {
         if (args[i] == "--syslib" && i + 1 < args.size())
