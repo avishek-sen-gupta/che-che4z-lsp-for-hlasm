@@ -307,8 +307,14 @@ TEST(program_export, exports_literal_pool)
     const auto program = exported(r);
 
     const nlohmann::json expected_literals = {
-        { { "section", "HELLO" }, { "offset", 16 }, { "item", dc_item("F", 4, false, string_nominal("5"), 16) } },
-        { { "section", "HELLO" }, { "offset", 20 }, { "item", dc_item("A", 4, false, addresses(reloc("HELLO", 4)), 20) } },
+        { { "section", "HELLO" },
+            { "offset", 16 },
+            { "item", dc_item("F", 4, false, string_nominal("5"), 16) },
+            { "origin", open_code(r.source_uri, 3) } },
+        { { "section", "HELLO" },
+            { "offset", 20 },
+            { "item", dc_item("A", 4, false, addresses(reloc("HELLO", 4)), 20) },
+            { "origin", open_code(r.source_uri, 4) } },
     };
     EXPECT_EQ(program.at("literals"), expected_literals);
     const nlohmann::json expected_statements = {
@@ -606,6 +612,25 @@ TEST(program_export, exports_channel_command_words_with_their_operands)
     EXPECT_EQ(statements[1], ccw(8, "READ", "CCW", 2, reloc("T", 32), 32, 80, 3, file));
     EXPECT_EQ(statements[2], ccw(16, "", "CCW1", 2, reloc("T", 32), 0, 4, 4, file));
     EXPECT_EQ(statements[3], ccw(24, "", "CCW0", 3, absolute(0), 64, 1, 5, file));
+}
+
+TEST(program_export, exports_a_literal_named_by_a_channel_command_word)
+{
+    const auto r = run_bridge("ccw_literal",
+        "T        CSECT\n"
+        "         CCW1  2,=A(BUF),0,4\n"
+        "BUF      DS    F\n"
+        "         END\n");
+    const auto program = exported(r);
+
+    const nlohmann::json expected_literals = {
+        { { "section", "T" },
+            { "offset", 16 },
+            { "item", dc_item("A", 4, false, addresses(reloc("T", 8)), 16) },
+            { "origin", open_code(r.source_uri, 2) } },
+    };
+    EXPECT_EQ(program.at("literals"), expected_literals);
+    EXPECT_EQ(program.at("statements")[0].at("address"), reloc("T", 16));
 }
 
 TEST(program_export, exports_amode_and_rmode_as_written)

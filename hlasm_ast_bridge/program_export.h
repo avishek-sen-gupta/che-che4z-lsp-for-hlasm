@@ -240,7 +240,10 @@ private:
             row["format"] = hp::instructions::mach_format_to_string(m->instruction->format());
             row["length"] = m->instruction->size_in_bits() / 8;
             row["operands"] = machine_operands(*m, s, solver);
-            collect_literals(*m, solver);
+            literal_finder finder;
+            for (const auto& o : m->operands)
+                o->access_mach()->apply_mach_visitor(finder);
+            collect_literals(finder, s.origin, solver);
             return row;
         }
         if (const auto* c = std::get_if<ccw_body>(&s.body))
@@ -250,6 +253,10 @@ private:
             row["address"] = address_value(*c->operands[1], solver);
             row["flags"] = absolute_operand(*c->operands[2], solver);
             row["count"] = absolute_operand(*c->operands[3], solver);
+            literal_finder finder;
+            for (const auto& o : c->operands)
+                o->apply(finder);
+            collect_literals(finder, s.origin, solver);
             return row;
         }
         const auto& data = std::get<data_body>(s.body);
@@ -381,11 +388,9 @@ private:
         };
     }
 
-    void collect_literals(const machine_body& m, hp::context::dependency_solver& solver)
+    void collect_literals(
+        const literal_finder& finder, const statement_origin& at, hp::context::dependency_solver& solver)
     {
-        literal_finder finder;
-        for (const auto& o : m.operands)
-            o->access_mach()->apply_mach_visitor(finder);
         for (const auto* lit : finder.found)
         {
             const auto id = lit->get_literal_id(solver);
@@ -397,6 +402,7 @@ private:
                 { "section", name_of(owner_of(address)->name) },
                 { "offset", address.offset() },
                 { "item", data_item(lit->get_data_definition(), true, solver, address.offset(), 0) },
+                { "origin", origin(at) },
             });
         }
     }
