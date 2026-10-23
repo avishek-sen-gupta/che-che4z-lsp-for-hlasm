@@ -670,3 +670,20 @@ TEST(program_export, evaluates_the_location_counter_at_each_value_of_each_copy)
     EXPECT_EQ(statements[3].at("items")[0].at("nominal"),
         (nlohmann::json { { "kind", "ADDRESSES" }, { "values", { absolute(0), absolute(4) } } }));
 }
+
+TEST(program_export, refuses_a_duplicated_s_constant_whose_later_copy_leaves_the_using_range)
+{
+    const auto r = run_bridge("s_copy_range",
+        "T        CSECT\n"
+        "         USING T,12\n"
+        "         ORG   T+4094\n"
+        "         DC    2S(*)\n"
+        "         END\n");
+
+    EXPECT_EQ(r.exit_code, 2);
+    EXPECT_EQ(r.out, "");
+    const auto diagnostics = nlohmann::json::parse(r.err).at("diagnostics");
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_EQ(diagnostics[0].at("code"), "BRIDGE");
+    EXPECT_EQ(diagnostics[0].at("message"), "S-type constant at line 4 is not addressable through a USING");
+}

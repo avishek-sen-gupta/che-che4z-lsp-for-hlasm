@@ -494,6 +494,9 @@ private:
         const auto& reloc = v.get_reloc();
         const auto& base = reloc.bases().front();
         const auto resolved = solver.using_evaluate(base.qualifier, base.owner, reloc.offset(), d.extension == 'Y');
+        if (resolved.reg == hp::context::using_collection::invalid_register)
+            throw std::runtime_error("S-type constant at line " + std::to_string(a.total.start.line + 1)
+                + " is not addressable through a USING");
         return based(resolved.reg, resolved.reg_offset);
     }
 
