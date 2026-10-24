@@ -74,8 +74,7 @@ struct mode_setting
 
 struct pool_point
 {
-    const hp::context::section* section;
-    int offset;
+    size_t generation;
     hp::index_t<hp::context::using_collection> active_using;
 };
 
@@ -303,10 +302,7 @@ private:
 
     void record_pool()
     {
-        const auto here = hlasm_ctx.ord_ctx.align(hp::context::no_align);
-        if (here.bases().empty())
-            return;
-        pools.push_back({ here.bases().front().owner, here.offset(), hlasm_ctx.ord_ctx.current_using() });
+        pools.push_back({ hlasm_ctx.ord_ctx.current_literal_pool_generation(), hlasm_ctx.ord_ctx.current_using() });
     }
 
     void record_entry(const hp::processing::resolved_statement& res)

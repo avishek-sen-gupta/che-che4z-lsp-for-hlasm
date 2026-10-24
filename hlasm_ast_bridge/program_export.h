@@ -391,13 +391,10 @@ private:
     }
 
     hp::index_t<hp::context::using_collection> pool_using(
-        const hp::context::address& literal, hp::index_t<hp::context::using_collection> fallback) const
+        size_t generation, hp::index_t<hp::context::using_collection> fallback) const
     {
-        const pool_point* found = nullptr;
-        for (const auto& p : pools)
-            if (p.section == owner_of(literal) && p.offset <= literal.offset() && (!found || p.offset >= found->offset))
-                found = &p;
-        return found ? found->active_using : fallback;
+        const auto found = std::ranges::find(pools, generation, &pool_point::generation);
+        return found != pools.end() ? found->active_using : fallback;
     }
 
     void collect_literals(
@@ -411,7 +408,7 @@ private:
             literal_ids.push_back(id);
             const auto& address = ord_ctx.get_symbol(id)->value().get_reloc();
             auto at_pool = s.dep_ctx;
-            at_pool.active_using = pool_using(address, s.dep_ctx.active_using);
+            at_pool.active_using = pool_using(s.dep_ctx.literal_pool_generation, s.dep_ctx.active_using);
             hp::context::ordinary_assembly_dependency_solver pool_solver(ord_ctx, at_pool, lib_info);
             literals.push_back({
                 { "section", name_of(owner_of(address)->name) },

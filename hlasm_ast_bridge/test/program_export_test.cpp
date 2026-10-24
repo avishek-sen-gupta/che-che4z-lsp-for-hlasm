@@ -629,6 +629,28 @@ TEST(program_export, resolves_an_s_type_literal_through_the_using_at_its_pool)
     EXPECT_EQ(program.at("literals")[0].at("item").at("nominal"), addresses({ { "kind", "BASE_DISPLACEMENT" }, { "base", 11 }, { "displacement", 12 } }));
 }
 
+TEST(program_export, resolves_an_s_type_literal_through_its_own_pool_when_a_location_counter_moves_the_pool)
+{
+    const auto program = exported(run_bridge("s_literal_loctr",
+        "T        CSECT\n"
+        "         USING T,12\n"
+        "         L     1,=S(FLD)\n"
+        "P        LOCTR\n"
+        "         LTORG\n"
+        "T        LOCTR\n"
+        "         DROP  12\n"
+        "         USING T,11\n"
+        "         L     1,=S(FLD+1)\n"
+        "P        LOCTR\n"
+        "         LTORG\n"
+        "T        LOCTR\n"
+        "FLD      DC    F'0'\n"
+        "         END\n"));
+
+    EXPECT_EQ(program.at("literals")[0].at("item").at("nominal"), addresses({ { "kind", "BASE_DISPLACEMENT" }, { "base", 12 }, { "displacement", 8 } }));
+    EXPECT_EQ(program.at("literals")[1].at("item").at("nominal"), addresses({ { "kind", "BASE_DISPLACEMENT" }, { "base", 11 }, { "displacement", 9 } }));
+}
+
 TEST(program_export, exports_a_literal_named_by_a_channel_command_word)
 {
     const auto r = run_bridge("ccw_literal",
