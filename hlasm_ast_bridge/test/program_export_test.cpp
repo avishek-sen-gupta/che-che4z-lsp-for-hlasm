@@ -323,6 +323,42 @@ TEST(program_export, exports_an_external_symbol_with_no_recorded_line_at_line_0)
     EXPECT_EQ(exported(r).at("externals"), (nlohmann::json { { { "name", "PX" }, { "kind", "EXTRN" }, { "line", 0 } } }));
 }
 
+TEST(program_export, exports_a_complex_relocatable_value_as_signed_terms_and_its_absolute_part)
+{
+    const auto r = run_bridge("complex_relocatable",
+        "A        CSECT\n"
+        "         DC    F'0'\n"
+        "X        DC    F'0'\n"
+        "D        DSECT\n"
+        "DF       DS    F\n"
+        "B        CSECT\n"
+        "         DC    H'0'\n"
+        "Y        DC    H'0'\n"
+        "         DC    A(X-Y),Y(X+X-Y+DF),A(X-E1+3)\n"
+        "         EXTRN E1\n"
+        "         END\n");
+    const auto program = exported(r);
+
+    const auto term = [](const std::string& kind, const std::string& name, const std::string& sign) {
+        return nlohmann::json { { "kind", kind }, { "name", name }, { "sign", sign } };
+    };
+    const auto complex = [](nlohmann::json terms, int offset) {
+        return nlohmann::json { { "kind", "COMPLEX" }, { "terms", std::move(terms) }, { "offset", offset } };
+    };
+    const auto& items = program.at("statements")[5].at("items");
+    EXPECT_EQ(items[0].at("nominal").at("values"),
+        (nlohmann::json { complex({ term("SECTION", "A", "PLUS"), term("SECTION", "B", "MINUS") }, 2) }));
+    EXPECT_EQ(items[1].at("nominal").at("values"),
+        (nlohmann::json { complex({ term("SECTION", "A", "PLUS"),
+                                      term("SECTION", "A", "PLUS"),
+                                      term("SECTION", "B", "MINUS"),
+                                      term("SECTION", "D", "PLUS") },
+            6) }));
+    EXPECT_EQ(items[2].at("nominal").at("values"),
+        (nlohmann::json { complex({ term("SECTION", "A", "PLUS"), term("EXTERNAL", "E1", "MINUS") }, 7) }));
+    EXPECT_EQ(program.at("externals"), (nlohmann::json { { { "name", "E1" }, { "kind", "EXTRN" }, { "line", 10 } } }));
+}
+
 TEST(program_export, refuses_an_entry_operand_that_is_not_a_symbol)
 {
     const auto r = run_bridge("entry_expression",

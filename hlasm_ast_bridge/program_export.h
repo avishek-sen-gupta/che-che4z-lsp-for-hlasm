@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -589,19 +590,50 @@ private:
         const auto v = e.evaluate(solver, hp::drop_diagnostic_op);
         if (v.value_kind() == hp::context::symbol_value_kind::ABS)
             return { { "kind", "ABS" }, { "value", v.get_abs() } };
-        if (v.value_kind() != hp::context::symbol_value_kind::RELOC || !v.get_reloc().is_simple())
+        if (v.value_kind() != hp::context::symbol_value_kind::RELOC)
             throw std::runtime_error("address constant at " + std::to_string(e.get_range().start.line + 1)
-                + " is neither absolute nor simply relocatable");
+                + " is neither absolute nor relocatable");
+        if (!v.get_reloc().is_simple())
+            return complex_relocatable(v.get_reloc());
         const auto* owner = owner_of(v.get_reloc());
-        if (owner->kind == section_kind::EXTERNAL || owner->kind == section_kind::WEAK_EXTERNAL)
+        if (is_external(*owner))
             return external(name_of(owner->name), v.get_reloc().offset());
         return { { "kind", "RELOC" }, { "section", name_of(owner->name) }, { "offset", v.get_reloc().offset() } };
     }
 
-    nlohmann::json external(std::string name, int offset)
+    static bool is_external(const hp::context::section& s)
+    { return s.kind == section_kind::EXTERNAL || s.kind == section_kind::WEAK_EXTERNAL; }
+
+    nlohmann::json complex_relocatable(const hp::context::address& a)
+    {
+        std::vector<nlohmann::json> terms;
+        for (const auto& b : a.bases())
+        {
+            const auto name = name_of(b.owner->name);
+            if (is_external(*b.owner))
+                note_external(name);
+            for (int i = 0; i < std::abs(b.cardinality); ++i)
+                terms.push_back({
+                    { "kind", is_external(*b.owner) ? "EXTERNAL" : "SECTION" },
+                    { "name", name },
+                    { "sign", b.cardinality < 0 ? "MINUS" : "PLUS" },
+                });
+        }
+        std::ranges::sort(terms, { }, [](const nlohmann::json& t) {
+            return t.at("name").get<std::string>() + " " + t.at("sign").get<std::string>();
+        });
+        return { { "kind", "COMPLEX" }, { "terms", terms }, { "offset", a.offset() } };
+    }
+
+    void note_external(const std::string& name)
     {
         externals.emplace(name, "EXTRN");
         external_lines.emplace(name, current_line);
+    }
+
+    nlohmann::json external(std::string name, int offset)
+    {
+        note_external(name);
         return { { "kind", "EXTERNAL" }, { "name", std::move(name) }, { "offset", offset } };
     }
 
