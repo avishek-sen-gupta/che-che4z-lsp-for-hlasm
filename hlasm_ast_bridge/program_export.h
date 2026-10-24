@@ -55,7 +55,8 @@
 
 namespace hlasm_ast_bridge {
 
-constexpr int program_format = 2;
+constexpr int program_format = 3;
+constexpr int section_alignment = 8;
 
 using hp::context::section_kind;
 
@@ -78,6 +79,7 @@ class program_exporter
     std::vector<nlohmann::json> literals;
     std::vector<hp::context::id_index> literal_ids;
     std::vector<pool_point> pools;
+    std::vector<const hp::context::section*> offset_named_dummies;
 
     class literal_finder final : public hp::expressions::mach_expr_visitor
     {
@@ -122,6 +124,7 @@ public:
             { "entry", entry(collector) },
             { "entries", collector.entries },
             { "externals", external_symbols() },
+            { "external_dummies", external_dummies(collector) },
             { "statements", statements },
             { "literals", literals },
             { "amodes", modes(collector.amodes) },
@@ -185,16 +188,52 @@ private:
         {
             if (section_kind_name(s->kind).empty())
                 continue;
-            int length = 0;
-            for (const auto& l : s->location_counters())
-            {
-                (void)l->set_available_value();
-                length = std::max(length, l->current_address().offset());
-            }
-            result.push_back(
-                { { "name", name_of(s->name) }, { "kind", section_kind_name(s->kind) }, { "length", length } });
+            result.push_back({ { "name", name_of(s->name) },
+                { "kind", section_kind_name(s->kind) },
+                { "length", section_length(*s) } });
         }
         return result;
+    }
+
+    static int section_length(const hp::context::section& s)
+    {
+        int length = 0;
+        for (const auto& l : s.location_counters())
+        {
+            (void)l->set_available_value();
+            length = std::max(length, l->current_address().offset());
+        }
+        return length;
+    }
+
+    nlohmann::json external_dummies(const statement_collector& collector)
+    {
+        auto result = nlohmann::json::array();
+        for (const auto& x : collector.external_dummies)
+            result.push_back(defined_dummy(x));
+        for (const auto* s : offset_named_dummies)
+            result.push_back({ { "name", name_of(s->name) },
+                { "length", section_length(*s) },
+                { "alignment", section_alignment } });
+        return result;
+    }
+
+    nlohmann::json defined_dummy(const external_dummy_definition& x) const
+    {
+        hp::context::ordinary_assembly_dependency_solver solver(ord_ctx, x.dep_ctx, lib_info);
+        uint64_t bit = 0;
+        uint64_t boundary = 1;
+        for (const auto& d : x.definitions)
+        {
+            const uint64_t align = d->get_alignment().boundary;
+            boundary = std::max(boundary, align);
+            if (d->length_type != hp::expressions::data_definition::length_type::BIT)
+                bit = hp::checking::round_up(hp::checking::round_up(bit, uint64_t { 8 }), align * 8);
+            bit += d->evaluate_total_length(solver, hp::checking::data_instr_type::DS, hp::drop_diagnostic_op);
+        }
+        return { { "name", x.name },
+            { "length", hp::checking::round_up(bit, uint64_t { 8 }) / 8 },
+            { "alignment", boundary } };
     }
 
     nlohmann::json symbols() const
@@ -266,6 +305,11 @@ private:
             for (const auto& o : c->operands)
                 o->apply(finder);
             collect_literals(finder, s, solver);
+            return row;
+        }
+        if (std::holds_alternative<cxd_body>(s.body))
+        {
+            row["kind"] = "CXD";
             return row;
         }
         const auto& data = std::get<data_body>(s.body);
@@ -504,6 +548,8 @@ private:
             return external(name_of(symbol->value), 0);
         if (d.type == 'S')
             return base_displacement(d, a, solver);
+        if (d.type == 'Q')
+            name_offset_dummy(*a.displacement, solver);
         return address_value(*a.displacement, solver);
     }
 
@@ -526,6 +572,16 @@ private:
             throw std::runtime_error("S-type constant at line " + std::to_string(a.total.start.line + 1)
                 + " is not addressable through a USING");
         return based(resolved.reg, resolved.reg_offset);
+    }
+
+    void name_offset_dummy(const hp::expressions::mach_expression& e, hp::context::dependency_solver& solver)
+    {
+        const auto v = e.evaluate(solver, hp::drop_diagnostic_op);
+        if (v.value_kind() != hp::context::symbol_value_kind::RELOC || !v.get_reloc().is_simple())
+            return;
+        const auto* owner = owner_of(v.get_reloc());
+        if (owner->kind == section_kind::DUMMY && std::ranges::find(offset_named_dummies, owner) == offset_named_dummies.end())
+            offset_named_dummies.push_back(owner);
     }
 
     nlohmann::json address_value(const hp::expressions::mach_expression& e, hp::context::dependency_solver& solver)
@@ -553,7 +609,11 @@ private:
     {
         auto result = nlohmann::json::array();
         for (const auto& [name, kind] : externals)
-            result.push_back({ { "name", name }, { "kind", kind }, { "line", external_lines.at(name) } });
+        {
+            const auto line = external_lines.find(name);
+            result.push_back(
+                { { "name", name }, { "kind", kind }, { "line", line == external_lines.end() ? 0 : line->second } });
+        }
         return result;
     }
 };

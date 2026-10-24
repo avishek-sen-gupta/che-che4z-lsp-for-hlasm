@@ -188,12 +188,13 @@ TEST(program_export, exports_resolved_machine_statement)
         { "origin", open_code(r.source_uri, 5) },
     };
     const nlohmann::json expected = {
-        { "format", 2 },
+        { "format", 3 },
         { "sections", { csect("HELLO", 12) } },
         { "symbols", { reloc_symbol("FIELD", "HELLO", 8, "F", 4), reloc_symbol("HELLO", "HELLO", 0, "J", 1) } },
         { "entry", { { "kind", "NAMED" }, { "name", "HELLO" } } },
         { "entries", nlohmann::json::array() },
         { "externals", nlohmann::json::array() },
+        { "external_dummies", nlohmann::json::array() },
         { "statements",
             {
                 machine("HELLO", 0, "LA", "LA", "RX-a", 4, { reg(15), storage(8, 0, 12, reloc("HELLO", 8)) }, open_code(r.source_uri, 3)),
@@ -278,6 +279,48 @@ TEST(program_export, exports_entries_and_external_symbols_by_strength)
             { { "name", "WEAK" }, { "kind", "WXTRN" }, { "line", 4 } },
         }));
     EXPECT_EQ(program.at("statements")[0].at("items")[0].at("nominal").at("values"), external_values);
+}
+
+TEST(program_export, exports_external_dummy_sections_and_cxd)
+{
+    const auto r = run_bridge("external_dummies",
+        "MAIN     CSECT\n"
+        "         DC    Q(PRA),QL2(D)\n"
+        "TOTAL    CXD\n"
+        "PRA      DXD   2F,XL3\n"
+        "PRB      DXD   CL1,D\n"
+        "D        DSECT\n"
+        "         DS    CL20\n"
+        "         END   MAIN\n");
+    const auto program = exported(r);
+
+    EXPECT_EQ(program.at("external_dummies"),
+        (nlohmann::json {
+            { { "name", "PRA" }, { "length", 11 }, { "alignment", 4 } },
+            { { "name", "PRB" }, { "length", 16 }, { "alignment", 8 } },
+            { { "name", "D" }, { "length", 20 }, { "alignment", 8 } },
+        }));
+    EXPECT_EQ(program.at("statements")[0].at("items")[1].at("nominal").at("values"),
+        (nlohmann::json { reloc("D", 0) }));
+    EXPECT_EQ(program.at("statements")[1],
+        (nlohmann::json {
+            { "kind", "CXD" },
+            { "section", "MAIN" },
+            { "offset", 8 },
+            { "label", "TOTAL" },
+            { "mnemonic", "CXD" },
+            { "origin", open_code(r.source_uri, 3) },
+        }));
+}
+
+TEST(program_export, exports_an_external_symbol_with_no_recorded_line_at_line_0)
+{
+    const auto r = run_bridge("part_external",
+        "MAIN     CSECT\n"
+        "         EXTRN PART(PX)\n"
+        "         END   MAIN\n");
+
+    EXPECT_EQ(exported(r).at("externals"), (nlohmann::json { { { "name", "PX" }, { "kind", "EXTRN" }, { "line", 0 } } }));
 }
 
 TEST(program_export, refuses_an_entry_operand_that_is_not_a_symbol)
