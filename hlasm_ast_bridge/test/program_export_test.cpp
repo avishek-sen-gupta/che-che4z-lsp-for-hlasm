@@ -188,10 +188,11 @@ TEST(program_export, exports_resolved_machine_statement)
         { "origin", open_code(r.source_uri, 5) },
     };
     const nlohmann::json expected = {
-        { "format", 1 },
+        { "format", 2 },
         { "sections", { csect("HELLO", 12) } },
         { "symbols", { reloc_symbol("FIELD", "HELLO", 8, "F", 4), reloc_symbol("HELLO", "HELLO", 0, "J", 1) } },
         { "entry", { { "kind", "NAMED" }, { "name", "HELLO" } } },
+        { "entries", nlohmann::json::array() },
         { "externals", nlohmann::json::array() },
         { "statements",
             {
@@ -233,7 +234,7 @@ TEST(program_export, exports_dc_nominals)
                 dc_item("F", 4, false, string_nominal("-1"), 16),
                 dc_item("P", 3, true, string_nominal("12"), 20),
                 dc_item("A", 4, false, addresses(reloc("HELLO", 8)), 24),
-                dc_item("V", 4, false, addresses({ { "kind", "EXTERNAL" }, { "name", "EXT" } }), 28),
+                dc_item("V", 4, false, addresses({ { "kind", "EXTERNAL" }, { "name", "EXT" }, { "offset", 0 } }), 28),
             } },
         { "origin", open_code(r.source_uri, 6) },
     };
@@ -250,8 +251,46 @@ TEST(program_export, exports_dc_nominals)
     ASSERT_EQ(statements.size(), 5u);
     EXPECT_EQ(statements[3], expected_dc);
     EXPECT_EQ(statements[4], expected_ds);
-    EXPECT_EQ(program.at("externals"), nlohmann::json { "EXT" });
+    EXPECT_EQ(program.at("externals"), (nlohmann::json { { { "name", "EXT" }, { "kind", "EXTRN" } } }));
     EXPECT_EQ(program.at("entry"), (nlohmann::json { { "kind", "DEFAULT" } }));
+}
+
+TEST(program_export, exports_entries_and_external_symbols_by_strength)
+{
+    const auto r = run_bridge("linkage",
+        "MAIN     CSECT\n"
+        "         ENTRY HERE,THERE\n"
+        "         EXTRN STRONG\n"
+        "         WXTRN WEAK\n"
+        "HERE     DC    A(STRONG+4),A(WEAK),V(IMPLIED),V(WEAK)\n"
+        "THERE    DC    F'0'\n"
+        "         END   MAIN\n");
+    const auto program = exported(r);
+
+    const nlohmann::json external_values = {
+        { { "kind", "EXTERNAL" }, { "name", "STRONG" }, { "offset", 4 } },
+    };
+    EXPECT_EQ(program.at("entries"), (nlohmann::json { "HERE", "THERE" }));
+    EXPECT_EQ(program.at("externals"),
+        (nlohmann::json {
+            { { "name", "IMPLIED" }, { "kind", "EXTRN" } },
+            { { "name", "STRONG" }, { "kind", "EXTRN" } },
+            { { "name", "WEAK" }, { "kind", "WXTRN" } },
+        }));
+    EXPECT_EQ(program.at("statements")[0].at("items")[0].at("nominal").at("values"), external_values);
+}
+
+TEST(program_export, refuses_an_entry_operand_that_is_not_a_symbol)
+{
+    const auto r = run_bridge("entry_expression",
+        "MAIN     CSECT\n"
+        "         ENTRY MAIN+4\n"
+        "         END   MAIN\n");
+
+    EXPECT_EQ(r.exit_code, 2);
+    const auto diagnostics = nlohmann::json::parse(r.err).at("diagnostics");
+    ASSERT_EQ(diagnostics.size(), 1u);
+    EXPECT_EQ(diagnostics[0].at("message"), "ENTRY operand at line 2 is not a symbol");
 }
 
 TEST(program_export, exports_macro_origin)

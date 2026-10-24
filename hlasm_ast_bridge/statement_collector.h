@@ -130,6 +130,7 @@ public:
     std::vector<recorded_statement> statements;
     std::optional<std::string> entry;
     bool entry_unrepresentable = false;
+    std::vector<std::string> entries;
     std::optional<std::string> unrepresentable;
     std::vector<mode_setting> amodes;
     std::vector<mode_setting> rmodes;
@@ -164,6 +165,8 @@ public:
             record_pool();
             record_entry(*res);
         }
+        else if (op.type == ASM && op.value == hp::context::id_index("ENTRY"))
+            record_entries(*res);
         else if (op.type == ASM && op.value == hp::context::id_index("LTORG"))
             record_pool();
         else if (op.type == ASM
@@ -303,6 +306,21 @@ private:
     void record_pool()
     {
         pools.push_back({ hlasm_ctx.ord_ctx.current_literal_pool_generation(), hlasm_ctx.ord_ctx.current_using() });
+    }
+
+    void record_entries(const hp::processing::resolved_statement& res)
+    {
+        for (const auto& op : res.operands_ref().value)
+        {
+            const auto* asm_op = op->access_asm();
+            const auto* expr = asm_op ? asm_op->access_expr() : nullptr;
+            const auto* symbol =
+                expr ? dynamic_cast<const hp::expressions::mach_expr_symbol*>(expr->expression.get()) : nullptr;
+            if (!symbol)
+                unrepresentable = "ENTRY operand at line " + std::to_string(origin_of().line) + " is not a symbol";
+            else
+                entries.emplace_back(symbol->value.to_string_view());
+        }
     }
 
     void record_entry(const hp::processing::resolved_statement& res)

@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <set>
@@ -54,7 +55,7 @@
 
 namespace hlasm_ast_bridge {
 
-constexpr int program_format = 1;
+constexpr int program_format = 2;
 
 using hp::context::section_kind;
 
@@ -71,7 +72,7 @@ class program_exporter
     hp::context::ordinary_assembly_context& ord_ctx;
     const hp::library_info& lib_info;
     const source_naming& naming;
-    std::set<std::string> externals;
+    std::map<std::string, std::string> externals;
     std::vector<nlohmann::json> literals;
     std::vector<hp::context::id_index> literal_ids;
     std::vector<pool_point> pools;
@@ -107,15 +108,16 @@ public:
         for (const auto& s : collector.statements)
             statements.push_back(statement(s));
         for (const auto& s : sections_of(section_kind::EXTERNAL))
-            externals.insert(s);
+            externals.emplace(s, "EXTRN");
         for (const auto& s : sections_of(section_kind::WEAK_EXTERNAL))
-            externals.insert(s);
+            externals[s] = "WXTRN";
         return {
             { "format", program_format },
             { "sections", sections() },
             { "symbols", symbols() },
             { "entry", entry(collector) },
-            { "externals", externals },
+            { "entries", collector.entries },
+            { "externals", external_symbols() },
             { "statements", statements },
             { "literals", literals },
             { "amodes", modes(collector.amodes) },
@@ -494,7 +496,7 @@ private:
     {
         const auto* symbol = dynamic_cast<const hp::expressions::mach_expr_symbol*>(a.displacement.get());
         if (d.type == 'V' && symbol)
-            return external(name_of(symbol->value));
+            return external(name_of(symbol->value), 0);
         if (d.type == 'S')
             return base_displacement(d, a, solver);
         return address_value(*a.displacement, solver);
@@ -531,14 +533,22 @@ private:
                 + " is neither absolute nor simply relocatable");
         const auto* owner = owner_of(v.get_reloc());
         if (owner->kind == section_kind::EXTERNAL || owner->kind == section_kind::WEAK_EXTERNAL)
-            return external(name_of(owner->name));
+            return external(name_of(owner->name), v.get_reloc().offset());
         return { { "kind", "RELOC" }, { "section", name_of(owner->name) }, { "offset", v.get_reloc().offset() } };
     }
 
-    nlohmann::json external(std::string name)
+    nlohmann::json external(std::string name, int offset)
     {
-        externals.insert(name);
-        return { { "kind", "EXTERNAL" }, { "name", std::move(name) } };
+        externals.emplace(name, "EXTRN");
+        return { { "kind", "EXTERNAL" }, { "name", std::move(name) }, { "offset", offset } };
+    }
+
+    nlohmann::json external_symbols() const
+    {
+        auto result = nlohmann::json::array();
+        for (const auto& [name, kind] : externals)
+            result.push_back({ { "name", name }, { "kind", kind } });
+        return result;
     }
 };
 
