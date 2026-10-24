@@ -73,6 +73,8 @@ class program_exporter
     const hp::library_info& lib_info;
     const source_naming& naming;
     std::map<std::string, std::string> externals;
+    std::map<std::string, int> external_lines;
+    int current_line = 0;
     std::vector<nlohmann::json> literals;
     std::vector<hp::context::id_index> literal_ids;
     std::vector<pool_point> pools;
@@ -111,6 +113,8 @@ public:
             externals.emplace(s, "EXTRN");
         for (const auto& s : sections_of(section_kind::WEAK_EXTERNAL))
             externals[s] = "WXTRN";
+        for (const auto& [name, line] : collector.external_lines)
+            external_lines[name] = line;
         return {
             { "format", program_format },
             { "sections", sections() },
@@ -230,6 +234,7 @@ private:
     nlohmann::json statement(const recorded_statement& s)
     {
         hp::context::ordinary_assembly_dependency_solver solver(ord_ctx, s.dep_ctx, lib_info);
+        current_line = static_cast<int>(s.origin.line);
         nlohmann::json row = {
             { "section", name_of(owner_of(s.address)->name) },
             { "offset", s.address.offset() },
@@ -540,6 +545,7 @@ private:
     nlohmann::json external(std::string name, int offset)
     {
         externals.emplace(name, "EXTRN");
+        external_lines.emplace(name, current_line);
         return { { "kind", "EXTERNAL" }, { "name", std::move(name) }, { "offset", offset } };
     }
 
@@ -547,7 +553,7 @@ private:
     {
         auto result = nlohmann::json::array();
         for (const auto& [name, kind] : externals)
-            result.push_back({ { "name", name }, { "kind", kind } });
+            result.push_back({ { "name", name }, { "kind", kind }, { "line", external_lines.at(name) } });
         return result;
     }
 };

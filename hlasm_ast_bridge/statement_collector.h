@@ -18,6 +18,7 @@
 #define HLASM_AST_BRIDGE_STATEMENT_COLLECTOR_H
 
 #include <memory>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -131,6 +132,7 @@ public:
     std::optional<std::string> entry;
     bool entry_unrepresentable = false;
     std::vector<std::string> entries;
+    std::map<std::string, int> external_lines;
     std::optional<std::string> unrepresentable;
     std::vector<mode_setting> amodes;
     std::vector<mode_setting> rmodes;
@@ -167,6 +169,9 @@ public:
         }
         else if (op.type == ASM && op.value == hp::context::id_index("ENTRY"))
             record_entries(*res);
+        else if (op.type == ASM
+            && (op.value == hp::context::id_index("EXTRN") || op.value == hp::context::id_index("WXTRN")))
+            record_externals(*res);
         else if (op.type == ASM && op.value == hp::context::id_index("LTORG"))
             record_pool();
         else if (op.type == ASM
@@ -306,6 +311,19 @@ private:
     void record_pool()
     {
         pools.push_back({ hlasm_ctx.ord_ctx.current_literal_pool_generation(), hlasm_ctx.ord_ctx.current_using() });
+    }
+
+    void record_externals(const hp::processing::resolved_statement& res)
+    {
+        for (const auto& op : res.operands_ref().value)
+        {
+            const auto* asm_op = op->access_asm();
+            const auto* expr = asm_op ? asm_op->access_expr() : nullptr;
+            const auto* symbol =
+                expr ? dynamic_cast<const hp::expressions::mach_expr_symbol*>(expr->expression.get()) : nullptr;
+            if (symbol)
+                external_lines.emplace(std::string(symbol->value.to_string_view()), origin_of().line);
+        }
     }
 
     void record_entries(const hp::processing::resolved_statement& res)

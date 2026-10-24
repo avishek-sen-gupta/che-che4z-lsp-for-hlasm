@@ -251,7 +251,7 @@ TEST(program_export, exports_dc_nominals)
     ASSERT_EQ(statements.size(), 5u);
     EXPECT_EQ(statements[3], expected_dc);
     EXPECT_EQ(statements[4], expected_ds);
-    EXPECT_EQ(program.at("externals"), (nlohmann::json { { { "name", "EXT" }, { "kind", "EXTRN" } } }));
+    EXPECT_EQ(program.at("externals"), (nlohmann::json { { { "name", "EXT" }, { "kind", "EXTRN" }, { "line", 6 } } }));
     EXPECT_EQ(program.at("entry"), (nlohmann::json { { "kind", "DEFAULT" } }));
 }
 
@@ -273,9 +273,9 @@ TEST(program_export, exports_entries_and_external_symbols_by_strength)
     EXPECT_EQ(program.at("entries"), (nlohmann::json { "HERE", "THERE" }));
     EXPECT_EQ(program.at("externals"),
         (nlohmann::json {
-            { { "name", "IMPLIED" }, { "kind", "EXTRN" } },
-            { { "name", "STRONG" }, { "kind", "EXTRN" } },
-            { { "name", "WEAK" }, { "kind", "WXTRN" } },
+            { { "name", "IMPLIED" }, { "kind", "EXTRN" }, { "line", 5 } },
+            { { "name", "STRONG" }, { "kind", "EXTRN" }, { "line", 3 } },
+            { { "name", "WEAK" }, { "kind", "WXTRN" }, { "line", 4 } },
         }));
     EXPECT_EQ(program.at("statements")[0].at("items")[0].at("nominal").at("values"), external_values);
 }
