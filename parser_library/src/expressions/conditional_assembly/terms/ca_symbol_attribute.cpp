@@ -164,7 +164,7 @@ context::SET_t ca_symbol_attribute::evaluate(const evaluation_context& eval_ctx)
 
     if (std::holds_alternative<semantics::literal_si>(symbol))
     {
-        return evaluate_literal(std::get<semantics::literal_si>(symbol), eval_ctx);
+        return evaluate_literal(std::get<semantics::literal_si>(symbol), eval_ctx, false);
     }
 
     return context::SET_t(expr_kind);
@@ -265,7 +265,7 @@ context::SET_t ca_symbol_attribute::evaluate_ordsym(context::id_index name, cons
 }
 
 context::SET_t ca_symbol_attribute::evaluate_literal(
-    const semantics::literal_si& lit, const evaluation_context& eval_ctx) const
+    const semantics::literal_si& lit, const evaluation_context& eval_ctx, bool macro_operand) const
 {
     auto& literals = eval_ctx.hlasm_ctx.ord_ctx.literals();
 
@@ -296,7 +296,7 @@ context::SET_t ca_symbol_attribute::evaluate_literal(
                         name_field, lit->get_range(), { eval_ctx.hlasm_ctx, eval_ctx.lib_info, drop_diagnostic_op })))
                 return "M";
 
-            if (scope.is_in_macro())
+            if (macro_operand)
                 return "U";
         }
         return std::string { lit->get_dd().get_type_attribute() };
@@ -430,7 +430,10 @@ context::SET_t ca_symbol_attribute::evaluate_substituted(context::id_index var_n
     if (!text.empty() && text.starts_with('='))
     {
         if (auto lit = reparse_substituted_literal(text, var_range, eval_ctx))
-            return evaluate_literal(lit, eval_ctx);
+        {
+            const auto* var_symbol = get_var_sym(eval_ctx, var_name);
+            return evaluate_literal(lit, eval_ctx, var_symbol && var_symbol->access_macro_param_base());
+        }
         else if (iequals(text, get_current_macro_name_field(eval_ctx.active_scope())))
             return "M";
         else

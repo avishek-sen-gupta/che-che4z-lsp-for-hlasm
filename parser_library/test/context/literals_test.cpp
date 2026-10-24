@@ -636,6 +636,13 @@ TEST(literals, macro_operand_literal_type_is_undefined_unless_already_used)
 &XT     SETC  '&XT&V'
         MEND
 
+        MACRO
+        BODY
+        GBLC  &XT
+&V      SETC  T'=F'9'
+&XT     SETC  '&XT&V'
+        MEND
+
         GBLC  &XT
         LARL  0,=F'7'
         MAC   =F'7'
@@ -643,13 +650,14 @@ TEST(literals, macro_operand_literal_type_is_undefined_unless_already_used)
         MAC   =CL3'AB'
         LARL  0,=F'8'
         MAC   =F'8'
+        BODY
 )";
     analyzer a(input);
     a.analyze();
 
     EXPECT_TRUE(a.diags().empty());
 
-    EXPECT_EQ(get_var_value<context::C_t>(a.hlasm_ctx(), "XT"), "FUUF");
+    EXPECT_EQ(get_var_value<context::C_t>(a.hlasm_ctx(), "XT"), "FUUFF");
 }
 
 TEST(literals, check_single_symbol)
