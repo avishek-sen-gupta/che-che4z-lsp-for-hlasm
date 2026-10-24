@@ -861,3 +861,39 @@ TEST(data_def_checker, special_values_H_wrong)
         EXPECT_TRUE(matches_message_codes(a.diags(), { "D010" }));
     }
 }
+
+TEST(data_def_checker, binary_floating_point_lengths_down_to_their_minimum)
+{
+    for (auto input : { " DC EBL.9'1'", " DC DBL.12'1'", " DC LBL.16'1'", " DC EBL2'1'", " DC LBL9'1'" })
+    {
+        analyzer a(input);
+        a.analyze();
+
+        EXPECT_TRUE(a.diags().empty()) << input;
+    }
+    for (auto input : { " DC EBL.8'1'", " DC DBL.11'1'", " DC LBL.15'1'", " DC EBL1'1'", " DC EBL5'1'" })
+    {
+        analyzer a(input);
+        a.analyze();
+
+        EXPECT_TRUE(matches_message_codes(a.diags(), { "D008" })) << input;
+    }
+}
+
+TEST(data_def_checker, floating_point_exponent_modifier_widens_with_a_type_extension)
+{
+    for (auto input : { " DC EBE80'1'", " DC DHE(-2147483648)'1'", " DC LDE(2147483647)'1'" })
+    {
+        analyzer a(input);
+        a.analyze();
+
+        EXPECT_TRUE(a.diags().empty()) << input;
+    }
+    for (auto input : { " DC EE80'1'", " DC DE-86'1'" })
+    {
+        analyzer a(input);
+        a.analyze();
+
+        EXPECT_TRUE(matches_message_codes(a.diags(), { "D008" })) << input;
+    }
+}

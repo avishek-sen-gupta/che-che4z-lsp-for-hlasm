@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <format>
 #include <iterator>
 
@@ -445,7 +446,7 @@ consteval data_def_type data_def_type_E_D_L(data_definition_type type,
         bit_length_spec,
         length_spec,
         scale_spec,
-        modifier_bound { -85, 75 },
+        extension == '\0' ? modifier_bound { -85, 75 } : modifier_bound { INT32_MIN, INT32_MAX },
         align,
         implicit_length,
         context::integer_type::hexfloat,
@@ -489,8 +490,8 @@ consteval data_def_type data_def_type_EB()
 {
     return data_def_type_E_D_L(data_definition_type::E,
         'B',
-        modifier_bound { 32, 32 },
-        modifier_bound { 4, 4 },
+        modifier_bound { 9, 32 },
+        modifier_bound { 2, 4 },
         ignored(),
         context::fullword,
         4);
@@ -522,8 +523,8 @@ consteval data_def_type data_def_type_DB()
 {
     return data_def_type_E_D_L(data_definition_type::D,
         'B',
-        modifier_bound { 64, 64 },
-        modifier_bound { 8, 8 },
+        modifier_bound { 12, 64 },
+        modifier_bound { 2, 8 },
         ignored(),
         context::doubleword,
         8);
@@ -588,8 +589,8 @@ consteval data_def_type data_def_type_LB()
 {
     return data_def_type_E_D_L(data_definition_type::L,
         'B',
-        modifier_bound { 128, 128 },
-        modifier_bound { 16, 16 },
+        modifier_bound { 16, 128 },
+        modifier_bound { 2, 16 },
         ignored(),
         context::doubleword,
         16);
