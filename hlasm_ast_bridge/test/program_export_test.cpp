@@ -285,12 +285,14 @@ TEST(program_export, exports_external_dummy_sections_and_cxd)
 {
     const auto r = run_bridge("external_dummies",
         "MAIN     CSECT\n"
-        "         DC    Q(PRA),QL2(D)\n"
+        "         DC    Q(PRA),QL2(D),Q(E)\n"
         "TOTAL    CXD\n"
         "PRA      DXD   2F,XL3\n"
         "PRB      DXD   CL1,D\n"
         "D        DSECT\n"
         "         DS    CL20\n"
+        "E        DSECT\n"
+        "         DS    F,LQ\n"
         "         END   MAIN\n");
     const auto program = exported(r);
 
@@ -299,6 +301,7 @@ TEST(program_export, exports_external_dummy_sections_and_cxd)
             { { "name", "PRA" }, { "length", 11 }, { "alignment", 4 } },
             { { "name", "PRB" }, { "length", 16 }, { "alignment", 8 } },
             { { "name", "D" }, { "length", 20 }, { "alignment", 8 } },
+            { { "name", "E" }, { "length", 32 }, { "alignment", 16 } },
         }));
     EXPECT_EQ(program.at("statements")[0].at("items")[1].at("nominal").at("values"),
         (nlohmann::json { reloc("D", 0) }));
@@ -306,7 +309,7 @@ TEST(program_export, exports_external_dummy_sections_and_cxd)
         (nlohmann::json {
             { "kind", "CXD" },
             { "section", "MAIN" },
-            { "offset", 8 },
+            { "offset", 12 },
             { "label", "TOTAL" },
             { "mnemonic", "CXD" },
             { "origin", open_code(r.source_uri, 3) },

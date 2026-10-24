@@ -81,6 +81,7 @@ class program_exporter
     std::vector<hp::context::id_index> literal_ids;
     std::vector<pool_point> pools;
     std::vector<const hp::context::section*> offset_named_dummies;
+    std::map<const hp::context::section*, uint64_t> data_alignments;
 
     class literal_finder final : public hp::expressions::mach_expr_visitor
     {
@@ -215,8 +216,15 @@ private:
         for (const auto* s : offset_named_dummies)
             result.push_back({ { "name", name_of(s->name) },
                 { "length", section_length(*s) },
-                { "alignment", section_alignment } });
+                { "alignment", std::max(uint64_t { section_alignment }, data_alignments[s]) } });
         return result;
+    }
+
+    void note_alignment(const hp::context::section& owner, const data_body& data)
+    {
+        auto& strictest = data_alignments[&owner];
+        for (const auto& d : data.definitions)
+            strictest = std::max(strictest, uint64_t { d->get_alignment().boundary });
     }
 
     nlohmann::json defined_dummy(const external_dummy_definition& x) const
@@ -314,6 +322,7 @@ private:
             return row;
         }
         const auto& data = std::get<data_body>(s.body);
+        note_alignment(*owner_of(s.address), data);
         row["kind"] = data.initialised ? "DC" : "DS";
         row["items"] = data_items(data, s.address, solver);
         return row;
