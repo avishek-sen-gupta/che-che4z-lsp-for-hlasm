@@ -85,6 +85,7 @@ TEST(processor_file, parse_macro)
     performance_metrics expected_metrics;
     expected_metrics.lines = 6;
     expected_metrics.macro_def_statements = 4;
+    expected_metrics.library_macro_def_statements = 4;
     expected_metrics.macro_statements = 2;
     expected_metrics.non_continued_statements = 6;
     expected_metrics.open_code_statements = 2;

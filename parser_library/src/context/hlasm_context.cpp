@@ -79,29 +79,19 @@ namespace {
 class sysstmt_macro_param_data : public macro_param_data_single_dynamic
 {
     const performance_metrics& metrics;
-    const std::deque<code_scope>& scope_stack;
 
 public:
     C_t get_dynamic_value() const override
     {
-        size_t adjustment = 0;
-
-        if (scope_stack.size() - 1 == 0)
-        {
-            // This is OPEN CODE -> add one
-            adjustment = 1;
-        }
-
-        size_t sysstmt = metrics.macro_def_statements + metrics.macro_statements + metrics.open_code_statements
-            + metrics.copy_statements + adjustment;
+        size_t sysstmt = metrics.macro_def_statements - metrics.library_macro_def_statements
+            + metrics.macro_statements + metrics.open_code_statements + metrics.copy_statements + 1;
 
         return std::format("{:08}", sysstmt);
     };
 
-    explicit sysstmt_macro_param_data(const performance_metrics& metrics, const std::deque<code_scope>& scope_stack)
+    explicit sysstmt_macro_param_data(const performance_metrics& metrics)
         : macro_param_data_single_dynamic()
-        , metrics(metrics)
-        , scope_stack(scope_stack) {};
+        , metrics(metrics) {};
 };
 
 macro_data_ptr create_macro_data(std::string value)
@@ -212,7 +202,7 @@ void hlasm_context::add_global_system_variables(system_variable_map& sysvars)
         sysvars.insert(create_system_variable(id_index("SYSSTEP"), *asm_options_.sysstep, true));
 
     sysvars.insert(create_system_variable(
-        id_index("SYSSTMT"), std::make_unique<sysstmt_macro_param_data>(metrics, scope_stack_), true));
+        id_index("SYSSTMT"), std::make_unique<sysstmt_macro_param_data>(metrics), true));
     sysvars.insert(create_system_variable(id_index("SYSTEM_ID"), asm_options_.system_id, true));
 
     static constexpr auto emulated_hlasm_sysver = "1.6.0";

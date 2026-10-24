@@ -52,6 +52,7 @@ processing_manager::processing_manager(std::unique_ptr<opencode_provider> base_p
     , lsp_analyzer_(*ctx_.hlasm_ctx, *ctx_.lsp_ctx, file_text)
     , stms_analyzers_({ &lsp_analyzer_ })
     , file_loc_(file_loc)
+    , library_macro_(proc_kind == processing_kind::MACRO)
     , m_fade_msgs(std::move(fade_msgs))
 {
     switch (proc_kind)
@@ -79,7 +80,8 @@ processing_manager::processing_manager(std::unique_ptr<opencode_provider> base_p
     opencode_prov_.onetime_action();
 }
 
-void update_metrics(processing_kind proc_kind, statement_provider_kind prov_kind, performance_metrics& metrics)
+void update_metrics(
+    processing_kind proc_kind, statement_provider_kind prov_kind, bool library_macro, performance_metrics& metrics)
 {
     switch (proc_kind)
     {
@@ -105,6 +107,8 @@ void update_metrics(processing_kind proc_kind, statement_provider_kind prov_kind
             break;
         case processing_kind::MACRO:
             metrics.macro_def_statements++;
+            if (library_macro)
+                metrics.library_macro_def_statements++;
             break;
     }
 }
@@ -127,7 +131,7 @@ utils::task processing_manager::co_step()
 
         if (auto stmt = prov.get_next(proc))
         {
-            update_metrics(proc.kind, prov.kind, hlasm_ctx_.metrics);
+            update_metrics(proc.kind, prov.kind, library_macro_, hlasm_ctx_.metrics);
             for (auto& a : stms_analyzers_)
                 if (a->analyze(*stmt, prov.kind, proc.kind, false))
                     co_await utils::task::suspend();

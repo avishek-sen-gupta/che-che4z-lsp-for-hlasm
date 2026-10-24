@@ -84,6 +84,7 @@ struct performance_metrics
 {
     size_t lines = 0;
     size_t macro_def_statements = 0;
+    size_t library_macro_def_statements = 0;
     size_t macro_statements = 0;
     size_t open_code_statements = 0;
     size_t copy_def_statements = 0;

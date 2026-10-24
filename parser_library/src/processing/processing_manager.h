@@ -92,6 +92,7 @@ private:
     std::vector<statement_analyzer*> stms_analyzers_;
 
     const utils::resource::resource_location file_loc_;
+    const bool library_macro_;
 
     context::source_snapshot lookahead_stop_;
     size_t lookahead_stop_ainsert_id = 0;

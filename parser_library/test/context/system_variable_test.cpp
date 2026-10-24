@@ -153,8 +153,8 @@ TEST(system_variable, sysstmt_macros)
     a.analyze();
     EXPECT_EQ(a.diags().size(), (size_t)0);
 
-    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR1"), "00000027");
-    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR2"), "00000030");
+    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR1"), "00000028");
+    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR2"), "00000031");
 }
 
 TEST(system_variable, sysstmt_copy)
@@ -188,7 +188,20 @@ TEST(system_variable, sysstmt_copy)
     EXPECT_EQ(a.diags().size(), (size_t)0);
 
     EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR1"), "00000006");
-    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR2"), "00000019");
+    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "VAR2"), "00000020");
+}
+
+TEST(system_variable, sysstmt_is_the_next_number_in_a_library_macro_expansion)
+{
+    std::string input = "        GBLC &V\n        LIBMAC\n";
+    std::string libmac = "        MACRO\n        LIBMAC\n        GBLC &V\n&V      SETC '&SYSSTMT'\n        MEND\n";
+
+    mock_parse_lib_provider lib_prov_instance { { "LIBMAC", libmac } };
+    analyzer a(input, analyzer_options { &lib_prov_instance });
+    a.analyze();
+    EXPECT_EQ(a.diags().size(), (size_t)0);
+
+    EXPECT_EQ(get_var_value<C_t>(a.hlasm_ctx(), "V"), "00000005");
 }
 
 TEST(system_variable, sysstmt_aread)
