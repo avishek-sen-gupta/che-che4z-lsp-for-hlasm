@@ -295,6 +295,9 @@ context::SET_t ca_symbol_attribute::evaluate_literal(
                     reparse_substituted_literal(
                         name_field, lit->get_range(), { eval_ctx.hlasm_ctx, eval_ctx.lib_info, drop_diagnostic_op })))
                 return "M";
+
+            if (scope.is_in_macro())
+                return "U";
         }
         return std::string { lit->get_dd().get_type_attribute() };
     }

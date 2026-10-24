@@ -626,6 +626,32 @@ TEST(literals, suppress_messages_from_DTO_attributes)
     EXPECT_EQ(get_var_value<context::C_t>(a.hlasm_ctx(), "XO"), "U");
 }
 
+TEST(literals, macro_operand_literal_type_is_undefined_unless_already_used)
+{
+    std::string input = R"(
+        MACRO
+        MAC   &T
+        GBLC  &XT
+&V      SETC  T'&T
+&XT     SETC  '&XT&V'
+        MEND
+
+        GBLC  &XT
+        LARL  0,=F'7'
+        MAC   =F'7'
+        MAC   =F'8'
+        MAC   =CL3'AB'
+        LARL  0,=F'8'
+        MAC   =F'8'
+)";
+    analyzer a(input);
+    a.analyze();
+
+    EXPECT_TRUE(a.diags().empty());
+
+    EXPECT_EQ(get_var_value<context::C_t>(a.hlasm_ctx(), "XT"), "FUUF");
+}
+
 TEST(literals, check_single_symbol)
 {
     std::string input = R"(
