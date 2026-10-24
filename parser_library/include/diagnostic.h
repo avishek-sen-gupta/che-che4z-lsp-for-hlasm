@@ -104,6 +104,7 @@ struct diagnostic
     std::vector<diagnostic_related_info> related;
     diagnostic_tag tag = diagnostic_tag::none;
     std::optional<unsigned> mnote_level;
+    bool mnote_comment = false;
 };
 
 } // namespace hlasm_plugin::parser_library

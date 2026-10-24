@@ -113,6 +113,7 @@ struct diagnostic_op
     range diag_range;
     diagnostic_tag tag;
     std::optional<unsigned> mnote_level;
+    bool mnote_comment = false;
 
     diagnostic_op() = default;
 
@@ -144,6 +145,7 @@ struct diagnostic_op
     diagnostic with_mnote_level(diagnostic d) const
     {
         d.mnote_level = mnote_level;
+        d.mnote_comment = mnote_comment;
         return d;
     }
 
@@ -815,7 +817,7 @@ struct diagnostic_op
 
     static diagnostic_op error_U006_duplicate_base_specified(const range& range);
 
-    static diagnostic_op mnote_diagnostic(unsigned level, std::string_view message, const range& range);
+    static diagnostic_op mnote_diagnostic(unsigned level, bool comment, std::string_view message, const range& range);
 
     static diagnostic_op ext_diagnostic(
         unsigned level, std::string_view func_name, std::string_view message, const range& range);

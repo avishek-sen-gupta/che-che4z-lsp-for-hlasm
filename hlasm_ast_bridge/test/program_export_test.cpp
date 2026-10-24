@@ -680,11 +680,42 @@ TEST(program_export, exports_the_macro_call_stack_of_each_diagnostic)
 
     ASSERT_EQ(diagnostics.size(), 1u);
     EXPECT_EQ(diagnostics[0].at("line"), 3);
-    EXPECT_EQ(diagnostics[0].at("message"), "4,CAREFUL");
+    EXPECT_EQ(diagnostics[0].at("message"), "CAREFUL");
+    EXPECT_EQ(diagnostics[0].at("mnote"), (nlohmann::json { { "kind", "LEVEL" }, { "level", 4 } }));
     EXPECT_EQ(diagnostics[0].at("related"),
         (nlohmann::json {
             { { "file", r.source_uri }, { "line", 7 } },
             { { "file", r.source_uri }, { "line", 9 } },
+        }));
+}
+
+TEST(program_export, exports_each_mnote_severity_or_comment_and_no_mnote_for_other_diagnostics)
+{
+    const auto r = run_bridge("mnotes",
+        "         MNOTE 7,'SEVEN'\n"
+        "         MNOTE 0,'ZERO'\n"
+        "         MNOTE ,'ONE'\n"
+        "         MNOTE *,'STAR'\n"
+        "         MNOTE 'BARE'\n"
+        "         MNOTE 2,BARE\n"
+        "         END\n");
+    const auto program = exported(r);
+    auto marks = nlohmann::json::array();
+    for (const auto& d : program.at("diagnostics"))
+        marks.push_back(nlohmann::json::array({ d.at("code"), d.at("message"), d.at("mnote") }));
+
+    const nlohmann::json none { { "kind", "NONE" } };
+    const nlohmann::json comment { { "kind", "COMMENT" } };
+    const auto level = [](int n) { return nlohmann::json { { "kind", "LEVEL" }, { "level", n } }; };
+    EXPECT_EQ(marks,
+        (nlohmann::json {
+            { "MNOTE", "SEVEN", level(7) },
+            { "MNOTE", "ZERO", level(0) },
+            { "MNOTE", "ONE", level(1) },
+            { "MNOTE", "STAR", comment },
+            { "MNOTE", "BARE", comment },
+            { "A300", "Warning at MNOTE instruction: operand not properly enclosed in quotes", none },
+            { "MNOTE", "BARE", level(2) },
         }));
 }
 

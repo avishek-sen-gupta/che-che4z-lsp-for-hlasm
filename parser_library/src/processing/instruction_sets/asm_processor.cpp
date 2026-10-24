@@ -1304,6 +1304,7 @@ void asm_processor::process_MNOTE(rebuilt_statement&& stmt)
     const auto& ops = stmt.operands_ref().value;
 
     std::optional<int> level;
+    bool comment = false;
     size_t first_op_len = 0;
 
     find_sequence_symbol(stmt);
@@ -1312,6 +1313,7 @@ void asm_processor::process_MNOTE(rebuilt_statement&& stmt)
     {
         case 1:
             level = 0;
+            comment = true;
             break;
         case 2:
             switch (ops[0]->type)
@@ -1327,6 +1329,7 @@ void asm_processor::process_MNOTE(rebuilt_statement&& stmt)
                     else if (dynamic_cast<const expressions::mach_expr_location_counter*>(expr->expression.get()))
                     {
                         level = 0;
+                        comment = true;
                         first_op_len = 1;
                     }
                     else
@@ -1392,7 +1395,7 @@ void asm_processor::process_MNOTE(rebuilt_statement&& stmt)
     if (output)
         output->mnote(level.value(), sanitized);
 
-    add_diagnostic(diagnostic_op::mnote_diagnostic(level.value(), sanitized, r));
+    add_diagnostic(diagnostic_op::mnote_diagnostic(level.value(), comment, sanitized, r));
 
     hlasm_ctx.update_mnote_max((unsigned)level.value());
 }

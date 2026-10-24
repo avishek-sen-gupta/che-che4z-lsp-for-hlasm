@@ -2593,7 +2593,7 @@ diagnostic_op diagnostic_op::error_U006_duplicate_base_specified(const range& ra
     return diagnostic_op(diagnostic_severity::error, "U006", "Base registers must be distinct.", range);
 }
 
-diagnostic_op diagnostic_op::mnote_diagnostic(unsigned level, std::string_view message, const range& range)
+diagnostic_op diagnostic_op::mnote_diagnostic(unsigned level, bool comment, std::string_view message, const range& range)
 {
     const auto lvl = level >= 8 ? diagnostic_severity::error
         : level >= 4            ? diagnostic_severity::warning
@@ -2602,6 +2602,7 @@ diagnostic_op diagnostic_op::mnote_diagnostic(unsigned level, std::string_view m
     const auto tag = level >= 2 ? diagnostic_tag::none : diagnostic_tag::unnecessary;
     auto result = diagnostic_op(lvl, "MNOTE", std::string(message), range, tag);
     result.mnote_level = level;
+    result.mnote_comment = comment;
     return result;
 }
 

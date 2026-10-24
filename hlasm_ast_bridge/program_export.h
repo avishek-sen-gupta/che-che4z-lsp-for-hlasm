@@ -562,12 +562,24 @@ inline std::string_view severity_name(hp::diagnostic_severity s)
     }
 }
 
+inline nlohmann::json no_mnote() { return { { "kind", "NONE" } }; }
+
+inline nlohmann::json mnote_json(const hp::diagnostic& d)
+{
+    if (d.mnote_comment)
+        return { { "kind", "COMMENT" } };
+    if (d.mnote_level)
+        return { { "kind", "LEVEL" }, { "level", *d.mnote_level } };
+    return no_mnote();
+}
+
 inline nlohmann::json diagnostic_json(std::string_view code,
     std::string_view severity,
     std::string_view message,
     std::string_view file,
     size_t line,
-    nlohmann::json related)
+    nlohmann::json related,
+    nlohmann::json mnote)
 {
     return {
         { "code", code },
@@ -576,6 +588,7 @@ inline nlohmann::json diagnostic_json(std::string_view code,
         { "file", file },
         { "line", line },
         { "related", std::move(related) },
+        { "mnote", std::move(mnote) },
     };
 }
 
@@ -593,10 +606,11 @@ inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags, co
     for (const auto& d : diags)
         result.push_back(diagnostic_json(d.code,
             severity_name(d.severity),
-            d.mnote_level ? std::to_string(*d.mnote_level) + "," + d.message : d.message,
+            d.message,
             naming.file_of(d.file_uri),
             d.diag_range.start.line + 1,
-            related_json(d, naming)));
+            related_json(d, naming),
+            mnote_json(d)));
     return result;
 }
 
@@ -650,7 +664,7 @@ inline int export_program(const std::string& source_path,
     }
     catch (const std::runtime_error& e)
     {
-        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), naming.file_of(source_uri), 0, nlohmann::json::array()) }));
+        return refuse(err, nlohmann::json::array({ diagnostic_json("BRIDGE", "ERROR", e.what(), naming.file_of(source_uri), 0, nlohmann::json::array(), no_mnote()) }));
     }
 }
 
