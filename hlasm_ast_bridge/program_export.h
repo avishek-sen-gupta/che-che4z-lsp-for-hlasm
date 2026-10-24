@@ -288,14 +288,14 @@ private:
     nlohmann::json data_items(
         const data_body& data, const hp::context::address& start, hp::context::dependency_solver& solver)
     {
-        using enum hp::expressions::data_definition::length_type;
+        using length_kind = enum hp::expressions::data_definition::length_type;
         const auto instr = data.initialised ? hp::checking::data_instr_type::DC : hp::checking::data_instr_type::DS;
         const uint64_t start_bit = uint64_t(start.offset()) * 8;
         auto bit = start_bit;
         auto items = nlohmann::json::array();
         for (const auto& d : data.definitions)
         {
-            if (d->length_type != BIT)
+            if (d->length_type != length_kind::BIT)
                 bit = hp::checking::round_up(
                     hp::checking::round_up(bit, uint64_t { 8 }), uint64_t(d->get_alignment().boundary) * 8);
             const auto at = start + int((bit - start_bit) / 8);
