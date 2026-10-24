@@ -15,6 +15,7 @@
 #ifndef HLASMPLUGIN_PARSERLIBRARY_DIAGNOSTIC_H
 #define HLASMPLUGIN_PARSERLIBRARY_DIAGNOSTIC_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -102,6 +103,7 @@ struct diagnostic
     std::string message;
     std::vector<diagnostic_related_info> related;
     diagnostic_tag tag = diagnostic_tag::none;
+    std::optional<unsigned> mnote_level;
 };
 
 } // namespace hlasm_plugin::parser_library

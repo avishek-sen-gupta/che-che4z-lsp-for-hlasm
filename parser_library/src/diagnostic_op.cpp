@@ -2600,7 +2600,9 @@ diagnostic_op diagnostic_op::mnote_diagnostic(unsigned level, std::string_view m
         : level >= 2            ? diagnostic_severity::info
                                 : diagnostic_severity::hint;
     const auto tag = level >= 2 ? diagnostic_tag::none : diagnostic_tag::unnecessary;
-    return diagnostic_op(lvl, "MNOTE", std::string(message), range, tag);
+    auto result = diagnostic_op(lvl, "MNOTE", std::string(message), range, tag);
+    result.mnote_level = level;
+    return result;
 }
 
 diagnostic_op diagnostic_op::ext_diagnostic(

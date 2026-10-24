@@ -680,6 +680,7 @@ TEST(program_export, exports_the_macro_call_stack_of_each_diagnostic)
 
     ASSERT_EQ(diagnostics.size(), 1u);
     EXPECT_EQ(diagnostics[0].at("line"), 3);
+    EXPECT_EQ(diagnostics[0].at("message"), "4,CAREFUL");
     EXPECT_EQ(diagnostics[0].at("related"),
         (nlohmann::json {
             { { "file", r.source_uri }, { "line", 7 } },

@@ -19,6 +19,7 @@
 // It also contains definitions (static methods) of almost all diagnostics
 // reported by analyzer.
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -111,6 +112,7 @@ struct diagnostic_op
     std::string message;
     range diag_range;
     diagnostic_tag tag;
+    std::optional<unsigned> mnote_level;
 
     diagnostic_op() = default;
 
@@ -127,16 +129,22 @@ struct diagnostic_op
 
     diagnostic to_diagnostic(std::string_view file_uri) const&
     {
-        return diagnostic(std::string(file_uri), diag_range, severity, code, message, {}, tag);
+        return with_mnote_level(diagnostic(std::string(file_uri), diag_range, severity, code, message, {}, tag));
     }
     diagnostic to_diagnostic(std::string_view file_uri) &&
     {
-        return diagnostic(std::string(file_uri), diag_range, severity, std::move(code), std::move(message), {}, tag);
+        return with_mnote_level(
+            diagnostic(std::string(file_uri), diag_range, severity, std::move(code), std::move(message), {}, tag));
     }
-    diagnostic to_diagnostic() const& { return diagnostic("", diag_range, severity, code, message, {}, tag); }
+    diagnostic to_diagnostic() const& { return with_mnote_level(diagnostic("", diag_range, severity, code, message, {}, tag)); }
     diagnostic to_diagnostic() &&
     {
-        return diagnostic("", diag_range, severity, std::move(code), std::move(message), {}, tag);
+        return with_mnote_level(diagnostic("", diag_range, severity, std::move(code), std::move(message), {}, tag));
+    }
+    diagnostic with_mnote_level(diagnostic d) const
+    {
+        d.mnote_level = mnote_level;
+        return d;
     }
 
 

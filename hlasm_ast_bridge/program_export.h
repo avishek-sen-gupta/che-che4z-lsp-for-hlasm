@@ -593,7 +593,7 @@ inline nlohmann::json diagnostics_json(std::span<const hp::diagnostic> diags, co
     for (const auto& d : diags)
         result.push_back(diagnostic_json(d.code,
             severity_name(d.severity),
-            d.message,
+            d.mnote_level ? std::to_string(*d.mnote_level) + "," + d.message : d.message,
             naming.file_of(d.file_uri),
             d.diag_range.start.line + 1,
             related_json(d, naming)));
